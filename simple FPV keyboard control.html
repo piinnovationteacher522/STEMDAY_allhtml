@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PXN V900 FPV 控制中心 x micro:bit</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #00ffcc;
+            margin-bottom: 15px;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        /* 頂部控制面板 */
+        .top-panel {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-sizing: border-box;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .btn-group button {
+            background-color: #444;
+            color: white;
+            border: 2px solid #555;
+            padding: 10px 15px;
+            margin-right: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        .btn-group button:hover {
+            background-color: #00ffcc;
+            color: #000;
+            border-color: #00ffcc;
+        }
+        .btn-settings {
+            background-color: #ffaa00 !important;
+            border-color: #cc8800 !important;
+            color: #000 !important;
+        }
+        .btn-settings:hover {
+            background-color: #ffcc00 !important;
+        }
+        .output-data {
+            font-size: 1.2rem;
+            color: #ffaa00;
+            font-family: monospace;
+            background: #111;
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: 1px solid #333;
+        }
+
+        /* FPV 攝影機與 HUD 疊加區塊 */
+        .fpv-container {
+            position: relative;
+            width: 100%;
+            max-width: 1200px;
+            aspect-ratio: 16 / 9;
+            background-color: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.8);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #webcam-video {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+        .start-cam-btn {
+            position: absolute;
+            z-index: 10;
+            background-color: #ffaa00;
+            color: #000;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 170, 0, 0.4);
+            transition: transform 0.2s;
+        }
+        .start-cam-btn:hover {
+            transform: scale(1.05);
+            background-color: #ffcc00;
+        }
+
+        /* HUD 儀表板介面 */
+        .hud-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            pointer-events: none;
+        }
+        .hud-top, .hud-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            width: 100%;
+        }
+        .hud-top {
+            align-items: flex-start;
+        }
+
+        .hud-widget {
+            background-color: rgba(20, 20, 20, 0.6);
+            backdrop-filter: blur(5px);
+            padding: 15px 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        /* HUD: 狀態與檔位 */
+        .gear-indicator {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #00ffcc;
+            text-align: center;
+        }
+        .gear-indicator.reverse { color: #ff4444; }
+        .status-text {
+            font-size: 1rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .status-connected { color: #00cc66; }
+        .status-disconnected { color: #ff4444; }
+
+        /* HUD: 方向盤 */
+        .steering-widget {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .steering-wheel {
+            width: 100px;
+            height: 100px;
+            border: 8px solid #888;
+            border-radius: 50%;
+            position: relative;
+            transition: transform 0.05s linear;
+            margin-bottom: 10px;
+        }
+        .steering-wheel::before {
+            content: ''; position: absolute;
+            top: -8px; left: 50%; transform: translateX(-50%);
+            width: 10px; height: 16px; background-color: #00ffcc; border-radius: 2px;
+        }
+        .steering-wheel::after {
+            content: ''; position: absolute;
+            top: 50%; left: -4px; right: -4px; height: 8px;
+            background-color: #888; transform: translateY(-50%);
+        }
+        .angle-display {
+            font-size: 1.5rem; font-weight: bold; color: #00ffcc; font-family: monospace;
+        }
+
+        /* HUD: 車速與踏板 */
+        .speed-display {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #fff;
+            font-family: monospace;
+            text-align: right;
+            margin-bottom: 10px;
+        }
+        .speed-unit { font-size: 1.2rem; color: #aaa; }
+        .pedal-row {
+            margin-top: 10px;
+            width: 200px;
+        }
+        .pedal-row label {
+            display: block; font-weight: bold; margin-bottom: 5px; font-size: 0.9rem;
+        }
+        .bar-container {
+            width: 100%; height: 15px; background-color: rgba(0,0,0,0.5);
+            border-radius: 8px; overflow: hidden; border: 1px solid #444;
+        }
+        .bar-fill { height: 100%; width: 0%; transition: width 0.05s linear; }
+        .gas-fill { background-color: #00ffcc; }
+        .brake-fill { background-color: #ff4444; }
+
+        /* 底部按鍵區 */
+        .buttons-panel {
+            width: 100%; max-width: 1200px;
+            background-color: #2a2a2a; padding: 20px;
+            border-radius: 10px; box-sizing: border-box;
+        }
+        .buttons-panel h2 { margin-top: 0; font-size: 1.2rem; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        .buttons-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px;
+        }
+        .button-box {
+            background-color: #444; padding: 12px 5px; text-align: center;
+            border-radius: 5px; font-weight: bold; font-size: 0.85rem; transition: 0.1s;
+        }
+        .button-box.pressed {
+            background-color: #ffaa00; color: #000; transform: scale(0.95);
+        }
+
+        /* 彈出設定視窗 (Modal) */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.7); z-index: 99;
+        }
+        .modal {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background-color: #2a2a2a; padding: 25px; border-radius: 10px; z-index: 100;
+            width: 90%; max-width: 400px; box-shadow: 0 0 20px rgba(0,0,0,0.8); border: 2px solid #555;
+        }
+        .modal h2 { margin-top: 0; color: #00ffcc; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        .setting-row { margin-bottom: 20px; }
+        .setting-row label { display: flex; justify-content: space-between; margin-bottom: 8px; font-weight: bold; }
+        .setting-row input[type="range"] { width: 100%; accent-color: #00ffcc; }
+        .setting-note { font-size: 0.8rem; color: #888; margin-top: 5px; }
+        .degree-selector { display: flex; gap: 15px; margin-top: 5px; }
+        .degree-selector label { font-weight: normal; cursor: pointer; }
+        .modal-btn-group { display: flex; justify-content: flex-end; margin-top: 20px; }
+        .modal-btn-group button {
+            background-color: #00cc66; color: white; border: none; padding: 10px 20px;
+            border-radius: 5px; cursor: pointer; font-size: 1rem; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>PXN V900 FPV 控制中心</h1>
+
+    <div class="top-panel">
+        <div class="btn-group">
+            <button id="connectBluetooth">連線 micro:bit (藍牙)</button>
+            <button id="connectUSB">連線 micro:bit (USB)</button>
+            <button id="openSettings" class="btn-settings">⚙️ 轉向與設定</button>
+        </div>
+        <div class="output-data" id="output-data-display">
+            發送封包: "180, 0"
+        </div>
+    </div>
+
+    <div class="fpv-container">
+        <video id="webcam-video" autoplay playsinline muted></video>
+        <button id="startCamBtn" class="start-cam-btn">📷 啟動 FPV 鏡頭</button>
+
+        <div class="hud-overlay" id="hud-container" style="display: none;">
+            <div class="hud-top">
+                <div class="hud-widget">
+                    <div id="gear-indicator" class="gear-indicator">D</div>
+                    <div style="text-align: center; font-size: 0.9rem; color: #aaa;">GEAR</div>
+                </div>
+                <div class="hud-widget">
+                    <div id="wheel-status" class="status-text status-connected">方向盤：等待連接...</div>
+                    <div id="microbit-status" class="status-text status-disconnected">micro:bit：未連接</div>
+                </div>
+            </div>
+
+            <div class="hud-bottom">
+                <div class="hud-widget steering-widget">
+                    <div class="steering-wheel" id="steering-wheel-visual"></div>
+                    <div class="angle-display" id="steering-angle-text">0°</div>
+                </div>
+
+                <div class="hud-widget">
+                    <div class="speed-display"><span id="speed-text">0</span> <span class="speed-unit">PWR</span></div>
+                    <div class="pedal-row">
+                        <label style="color: #00ffcc;">ACCEL (油門)</label>
+                        <div class="bar-container"><div class="bar-fill gas-fill" id="gas-bar"></div></div>
+                    </div>
+                    <div class="pedal-row">
+                        <label style="color: #ff4444;">BRAKE (剎車)</label>
+                        <div class="bar-container"><div class="bar-fill brake-fill" id="brake-bar"></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="buttons-panel" id="buttons-panel" style="display: none;">
+        <h2>輔助按鍵狀態 (Buttons)</h2>
+        <div class="buttons-grid" id="buttons-display"></div>
+    </div>
+
+    <div class="modal-overlay" id="modalOverlay"></div>
+    <div class="modal" id="settingsModal">
+        <h2>進階設定</h2>
+
+        <div class="setting-row">
+            <label><span>方向控制反轉</span></label>
+            <div class="degree-selector">
+                <label><input type="checkbox" id="invertYInput"> 反轉前後</label>
+                <label><input type="checkbox" id="invertXInput"> 反轉左右</label>
+            </div>
+            <div class="setting-note">遇到馬達接反或安裝方向相反時使用。</div>
+        </div>
+        
+        <div class="setting-row">
+            <label><span>方向盤實體度數</span></label>
+            <div class="degree-selector">
+                <label><input type="radio" name="wheelDegree" value="900" checked> 900°</label>
+                <label><input type="radio" name="wheelDegree" value="270"> 270°</label>
+            </div>
+            <div class="setting-note">請確認此處設定與實體方向盤後方開關一致。</div>
+        </div>
+
+        <div class="setting-row">
+            <label>
+                <span>最高速度 (Max Speed)</span>
+                <span id="max-speed-display">100</span>
+            </label>
+            <input type="range" id="maxSpeedInput" min="50" max="100" value="100">
+            <div class="setting-note">限制車輛的最大動力輸出值 (50 - 100)。</div>
+        </div>
+
+        <div class="setting-row">
+            <label>
+                <span>死區 (Deadzone)</span>
+                <span id="dz-value-display">5%</span>
+            </label>
+            <input type="range" id="deadzoneInput" min="0" max="30" value="5">
+            <div class="setting-note">中心無效區。增加此值可防止方向盤微小抖動導致偏航。</div>
+        </div>
+
+        <div class="setting-row">
+            <label>
+                <span>靈敏度 (Sensitivity)</span>
+                <span id="sens-value-display">100%</span>
+            </label>
+            <input type="range" id="sensitivityInput" min="50" max="250" value="100">
+            <div class="setting-note">大於 100% 時，不需將方向盤轉到底即可達到最大轉向。</div>
+        </div>
+
+        <div class="modal-btn-group">
+            <button id="saveSettings">確定</button>
+        </div>
+    </div>
+
+    <script>
+        /* ==================== 攝影機 (Webcam) 邏輯 ==================== */
+        const videoElement = document.getElementById('webcam-video');
+        const startCamBtn = document.getElementById('startCamBtn');
+
+        startCamBtn.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
+                });
+                videoElement.srcObject = stream;
+                startCamBtn.style.display = 'none';
+            } catch (err) {
+                console.error("無法存取攝影機", err);
+                alert("無法存取攝影機，請檢查瀏覽器權限設定或確認設備是否有鏡頭。");
+            }
+        });
+
+        /* ==================== 進階設定邏輯 ==================== */
+        let activeDeadzone = 0.05;
+        let activeSensitivity = 1.00;
+        let activeMaxSpeed = 100;
+        let activeInvertY = false; // 反轉前後
+        let activeInvertX = false; // 反轉左右
+
+        const modalOverlay = document.getElementById('modalOverlay');
+        const settingsModal = document.getElementById('settingsModal');
+        const btnOpenSettings = document.getElementById('openSettings');
+        const btnSaveSettings = document.getElementById('saveSettings');
+        
+        const deadzoneInput = document.getElementById('deadzoneInput');
+        const sensitivityInput = document.getElementById('sensitivityInput');
+        const maxSpeedInput = document.getElementById('maxSpeedInput');
+        const invertYInput = document.getElementById('invertYInput');
+        const invertXInput = document.getElementById('invertXInput');
+
+        const dzDisplay = document.getElementById('dz-value-display');
+        const sensDisplay = document.getElementById('sens-value-display');
+        const maxSpeedDisplay = document.getElementById('max-speed-display');
+
+        deadzoneInput.addEventListener('input', (e) => { dzDisplay.textContent = e.target.value + '%'; });
+        sensitivityInput.addEventListener('input', (e) => { sensDisplay.textContent = e.target.value + '%'; });
+        maxSpeedInput.addEventListener('input', (e) => { maxSpeedDisplay.textContent = e.target.value; });
+
+        btnOpenSettings.addEventListener('click', () => {
+            modalOverlay.style.display = 'block';
+            settingsModal.style.display = 'block';
+            deadzoneInput.value = activeDeadzone * 100;
+            sensitivityInput.value = activeSensitivity * 100;
+            maxSpeedInput.value = activeMaxSpeed;
+            invertYInput.checked = activeInvertY;
+            invertXInput.checked = activeInvertX;
+
+            dzDisplay.textContent = deadzoneInput.value + '%';
+            sensDisplay.textContent = sensitivityInput.value + '%';
+            maxSpeedDisplay.textContent = maxSpeedInput.value;
+        });
+
+        btnSaveSettings.addEventListener('click', () => {
+            activeDeadzone = parseInt(deadzoneInput.value) / 100;
+            activeSensitivity = parseInt(sensitivityInput.value) / 100;
+            activeMaxSpeed = parseInt(maxSpeedInput.value);
+            activeInvertY = invertYInput.checked;
+            activeInvertX = invertXInput.checked;
+
+            modalOverlay.style.display = 'none';
+            settingsModal.style.display = 'none';
+        });
+
+        /* ==================== micro:bit 通訊設定 ==================== */
+        const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+        const UART_TX_CHARACTERISTIC_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; 
+        const UART_RX_CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; 
+
+        let uBitDevice = null;
+        let rxCharacteristic = null;
+        let serialPort = null;
+
+        let currentCarAngle = 180;
+        let currentCarSpeed = 0;
+        let preciseSpeed = 0; 
+        let currentGear = 1;  // 1 = D檔, -1 = R檔
+
+        function setMbStatus(msg, isError = false) {
+            const el = document.getElementById("microbit-status");
+            el.textContent = `micro:bit：${msg}`;
+            el.className = isError ? "status-text status-disconnected" : "status-text status-connected";
+        }
+
+        async function connectBluetooth() {
+            try {
+                setMbStatus("正在搜尋...", false);
+                uBitDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: "BBC micro:bit" }],
+                    optionalServices: [UART_SERVICE_UUID]
+                });
+                uBitDevice.addEventListener("gattserverdisconnected", () => {
+                    setMbStatus("未連接", true);
+                    uBitDevice = null; rxCharacteristic = null;
+                });
+                const server = await uBitDevice.gatt.connect();
+                const service = await server.getPrimaryService(UART_SERVICE_UUID);
+                rxCharacteristic = await service.getCharacteristic(UART_RX_CHARACTERISTIC_UUID);
+                setMbStatus("藍牙已連接", false);
+            } catch (err) {
+                setMbStatus("藍牙連接失敗", true);
+                console.error(err);
+            }
+        }
+
+        async function connectUSB() {
+            try {
+                setMbStatus("請選擇序列埠...", false);
+                serialPort = await navigator.serial.requestPort();
+                await serialPort.open({ baudRate: 9600 });
+                setMbStatus("USB 已連接", false);
+            } catch (err) {
+                setMbStatus("USB 連接失敗", true);
+                console.error(err);
+            }
+        }
+
+        async function sendToMicrobit(message) {
+            const data = message + "\n"; 
+            const encoder = new TextEncoder();
+            try {
+                if (serialPort?.writable) {
+                    const writer = serialPort.writable.getWriter();
+                    await writer.write(encoder.encode(data));
+                    writer.releaseLock();
+                    return;
+                }
+                if (rxCharacteristic) {
+                    await rxCharacteristic.writeValue(encoder.encode(data));
+                    return;
+                }
+            } catch (err) { console.error("發送失敗", err); }
+        }
+
+        document.getElementById("connectBluetooth").addEventListener("click", connectBluetooth);
+        document.getElementById("connectUSB").addEventListener("click", connectUSB);
+
+        setInterval(() => {
+            const packet = `${currentCarAngle},${currentCarSpeed}`;
+            document.getElementById("output-data-display").textContent = `發送封包: "${packet}"`;
+            if (serialPort?.writable || rxCharacteristic) sendToMicrobit(packet);
+        }, 100);
+
+        /* ==================== 鍵盤控制邏輯 ==================== */
+        const keys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false,
+            " ": false
+        };
+        let kbSteer = 0;
+
+        window.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.key)) {
+                keys[e.key] = true;
+                if(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+                    e.preventDefault(); 
+                }
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.key)) {
+                keys[e.key] = false;
+            }
+        });
+
+        /* ==================== 遊戲控制器邏輯與 HUD 更新 ==================== */
+        const wheelStatusDiv = document.getElementById('wheel-status');
+        const gearIndicator = document.getElementById('gear-indicator');
+        const hudContainer = document.getElementById('hud-container');
+        const buttonsPanel = document.getElementById('buttons-panel');
+        const buttonsDisplay = document.getElementById('buttons-display');
+        
+        let updateInterval;
+        let activeGamepadIndex = null; 
+
+        const buttonNames = {
+            0: 'A', 1: 'B', 2: 'X', 3: 'Y',
+            4: 'L1/LB', 5: 'R1/RB', 6: 'L2/LT', 7: 'R2/RT',
+            8: 'SHARE', 9: 'OPTIONS', 10: 'L3/SL', 11: 'R3/SR',
+            12: 'MODE', 13: '左撥片(R檔)', 14: '右撥片(D檔)'
+        };
+        const maxButtonsToShow = 15;
+
+        function getMaxDegree() {
+            const radios = document.getElementsByName('wheelDegree');
+            for (let radio of radios) { if (radio.checked) return parseInt(radio.value); }
+            return 900;
+        }
+
+        window.addEventListener("gamepadconnected", (e) => {
+            const gp = e.gamepad;
+            activeGamepadIndex = gp.index; 
+            wheelStatusDiv.textContent = `方向盤：已連接`;
+            wheelStatusDiv.className = 'status-text status-connected';
+            buttonsPanel.style.display = 'block';
+            initButtonsUI(gp);
+        });
+
+        window.addEventListener("gamepaddisconnected", (e) => {
+            if (e.gamepad.index === activeGamepadIndex) {
+                wheelStatusDiv.textContent = "方向盤：未連接 (可使用鍵盤)";
+                wheelStatusDiv.className = 'status-text status-disconnected';
+                buttonsPanel.style.display = 'none';
+                activeGamepadIndex = null;
+            }
+        });
+
+        function initButtonsUI(gamepad) {
+            buttonsDisplay.innerHTML = '';
+            const btnCount = Math.min(gamepad.buttons.length, maxButtonsToShow);
+            for (let i = 0; i < btnCount; i++) {
+                const btnBox = document.createElement('div');
+                btnBox.className = 'button-box';
+                btnBox.id = `btn-${i}`;
+                btnBox.textContent = buttonNames[i] !== undefined ? buttonNames[i] : `B${i}`;
+                buttonsDisplay.appendChild(btnBox);
+            }
+        }
+
+        function updateLoop() {
+            const gamepads = navigator.getGamepads();
+            const gp = activeGamepadIndex !== null ? gamepads[activeGamepadIndex] : null;
+
+            let rawAngle = 0;
+            let gasLevel = 0;
+            let brakeLevel = 0;
+
+            // -------- 1. 讀取與處理實體方向盤資料 --------
+            if (gp) {
+                let rBtnPressed = gp.buttons[13] && gp.buttons[13].pressed;
+                let dBtnPressed = gp.buttons[14] && gp.buttons[14].pressed;
+
+                // 若啟用了反轉前後，交換方向盤撥片的 D/R 檔邏輯
+                if (activeInvertY) {
+                    let temp = rBtnPressed;
+                    rBtnPressed = dBtnPressed;
+                    dBtnPressed = temp;
+                }
+
+                if (rBtnPressed) { if (currentGear !== -1) { currentGear = -1; } }
+                if (dBtnPressed) { if (currentGear !== 1) { currentGear = 1; } }
+
+                rawAngle = gp.axes[0] !== undefined ? gp.axes[0] : 0;
+                let rawGas = gp.axes[2] !== undefined ? gp.axes[2] : -1;
+                let rawBrake = gp.axes[5] !== undefined ? gp.axes[5] : -1;
+
+                gasLevel = (rawGas + 1) / 2;
+                brakeLevel = (rawBrake + 1) / 2;
+
+                const btnCount = Math.min(gp.buttons.length, maxButtonsToShow); 
+                for (let i = 0; i < btnCount; i++) {
+                    const btnBox = document.getElementById(`btn-${i}`);
+                    if (!btnBox) continue;
+                    if (gp.buttons[i].pressed) btnBox.classList.add('pressed');
+                    else btnBox.classList.remove('pressed');
+                }
+            }
+
+            // -------- 2. 讀取鍵盤資料與智慧防衝車機制 --------
+            if (keys.ArrowLeft) {
+                kbSteer -= 0.05;
+            } else if (keys.ArrowRight) {
+                kbSteer += 0.05;
+            } else {
+                kbSteer *= 0.8; 
+            }
+            kbSteer = Math.max(-1, Math.min(1, kbSteer));
+
+            // 如果鍵盤有輸入轉向，覆蓋方向盤數值
+            if (Math.abs(kbSteer) > 0.01) {
+                rawAngle = kbSteer;
+            }
+
+            // 處理左右反轉邏輯
+            if (activeInvertX) {
+                rawAngle = -rawAngle;
+            }
+
+            // 處理前後反轉邏輯 (針對鍵盤)
+            let keyForward = keys.ArrowUp;
+            let keyBackward = keys.ArrowDown;
+            if (activeInvertY) {
+                let temp = keyForward;
+                keyForward = keyBackward;
+                keyBackward = temp;
+            }
+
+            // 鍵盤智慧排檔與加減速機制
+            if (keyForward) {
+                if (preciseSpeed < -1) {
+                    brakeLevel = 1;
+                } else {
+                    currentGear = 1;
+                    gasLevel = 1;
+                }
+            } 
+            else if (keyBackward) {
+                if (preciseSpeed > 1) {
+                    brakeLevel = 1; 
+                } else {
+                    currentGear = -1; 
+                    gasLevel = 1;
+                }
+            }
+
+            if (keys[" "]) {
+                brakeLevel = 1;
+            }
+
+            // -------- 3. 轉向與物理引擎共用運算 --------
+            const currentMaxDegree = getMaxDegree();
+            let effectiveAngle = 0;
+            
+            if (rawAngle > activeDeadzone) {
+                effectiveAngle = (rawAngle - activeDeadzone) / (1 - activeDeadzone);
+            } else if (rawAngle < -activeDeadzone) {
+                effectiveAngle = (rawAngle + activeDeadzone) / (1 - activeDeadzone);
+            }
+            effectiveAngle = Math.max(-1, Math.min(1, effectiveAngle * activeSensitivity));
+            currentCarAngle = Math.round(180 + (effectiveAngle * 60));
+
+            let targetSpeed = gasLevel * activeMaxSpeed * currentGear;
+
+            if (gasLevel > 0.05) {
+                preciseSpeed += (targetSpeed - preciseSpeed) * 0.08;
+            } else {
+                preciseSpeed += (0 - preciseSpeed) * 0.07; 
+            }
+
+            if (brakeLevel > 0.05) {
+                let brakePower = brakeLevel * 8; 
+                if (preciseSpeed > 0) {
+                    preciseSpeed -= brakePower;
+                    if (preciseSpeed < 0) preciseSpeed = 0;
+                } else if (preciseSpeed < 0) {
+                    preciseSpeed += brakePower;
+                    if (preciseSpeed > 0) preciseSpeed = 0;
+                }
+            }
+
+            // 限制最大上下限速
+            preciseSpeed = Math.max(-activeMaxSpeed, Math.min(activeMaxSpeed, preciseSpeed));
+            currentCarSpeed = Math.round(preciseSpeed);
+
+            // -------- 4. HUD 視覺畫面更新 --------
+            if (currentGear === 1) {
+                gearIndicator.textContent = 'D';
+                gearIndicator.className = 'gear-indicator';
+            } else {
+                gearIndicator.textContent = 'R';
+                gearIndicator.className = 'gear-indicator reverse';
+            }
+
+            // 視覺方向盤會跟著「反轉後的實際指令」一起轉動
+            const currentVisualAngle = rawAngle * (currentMaxDegree / 2);
+            document.getElementById('steering-wheel-visual').style.transform = `rotate(${currentVisualAngle}deg)`;
+            
+            let displayAngle = currentVisualAngle > 0 ? `+${currentVisualAngle.toFixed(0)}` : currentVisualAngle.toFixed(0);
+            if (Math.abs(currentVisualAngle) < 1) displayAngle = "0";
+            document.getElementById('steering-angle-text').textContent = `${displayAngle}°`;
+
+            document.getElementById('gas-bar').style.width = `${gasLevel * 100}%`;
+            document.getElementById('brake-bar').style.width = `${brakeLevel * 100}%`;
+            document.getElementById('speed-text').textContent = Math.abs(currentCarSpeed);
+
+            updateInterval = requestAnimationFrame(updateLoop);
+        }
+
+        // 初始化狀態
+        hudContainer.style.display = 'flex';
+        wheelStatusDiv.textContent = "方向盤：未連接 (可使用鍵盤)";
+        wheelStatusDiv.className = 'status-text status-disconnected';
+        updateLoop();
+    </script>
+</body>
+</html>

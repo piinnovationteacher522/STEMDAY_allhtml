@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>🎈 歡樂角色大遊行</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <style>
+        /* 全局變數與字體統一 */
+        :root {
+            --char-size: 250px; 
+        }
+
+        html, body {
+            margin: 0; padding: 0;
+            width: 100vw; height: 100vh;
+            overflow: hidden; 
+            /* 統一為可愛字體 */
+            font-family: 'Comic Sans MS', 'Arial Rounded MT Bold', 'Segoe UI', sans-serif;
+            color: #333;
+        }
+
+        #bg-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            background-color: #e0f7fa; /* 預設淡藍色背景 */
+            background-size: cover;
+            background-position: center center;
+            background-repeat: no-repeat;
+            z-index: -1; 
+        }
+        
+        /* 叫出面板的 3D 按鈕 */
+        #showUiBtn {
+            position: absolute; top: 20px; left: 20px; z-index: 999;
+            padding: 12px 20px; font-size: 18px; font-weight: bold; cursor: pointer;
+            border: none; border-radius: 15px; color: white; background-color: #ff9800;
+            box-shadow: 0 6px 0 #e65100; transition: all 0.1s;
+            display: none; font-family: inherit;
+        }
+        #showUiBtn:active { transform: translateY(6px); box-shadow: 0 0 0 #e65100; }
+
+        /* 卡通化控制面板 */
+        #ui-layer {
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px 25px; border-radius: 20px; 
+            border: 4px solid #ffeb3b; /* 粗黃邊框 */
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15); 
+            backdrop-filter: blur(5px);
+            transition: transform 0.3s ease, opacity 0.3s ease;
+            width: 340px;
+        }
+        
+        #ui-layer.hidden {
+            transform: translateY(-20px) scale(0.95); opacity: 0; pointer-events: none;
+        }
+        
+        .header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+        
+        /* 活潑的標題 */
+        h1 { 
+            margin: 0; font-size: 26px; color: #ff5722; 
+            text-shadow: 2px 2px 0px #fff;
+        }
+        
+        .close-btn { 
+            background: none; border: none; font-size: 24px; color: #ccc; 
+            cursor: pointer; padding: 0; margin-left: 10px; transition: 0.2s;
+        }
+        .close-btn:hover { color: #f44336; transform: scale(1.2) rotate(90deg); }
+        
+        p { margin: 0 0 15px 0; font-weight: bold; color: #00796b; font-size: 16px; }
+        
+        /* 拉桿控制區 - 柔和底色 */
+        .control-panel {
+            margin-bottom: 15px; padding: 15px; background: #e0f7fa; 
+            border-radius: 15px; border: 2px dashed #00acc1;
+        }
+        .control-panel label { font-size: 15px; font-weight: bold; display: flex; justify-content: space-between; margin-bottom: 8px; color: #006064;}
+        .control-panel input[type="range"] { width: 100%; cursor: pointer; margin-bottom: 15px; height: 15px; }
+        .control-panel input[type="range"]:last-child { margin-bottom: 0; }
+
+        .btn-group { display: flex; flex-direction: column; gap: 12px; }
+        .row { display: flex; gap: 12px; }
+        
+        /* 3D 質感操作按鈕 */
+        button.action-btn {
+            padding: 12px 10px; font-size: 16px; font-weight: bold; cursor: pointer;
+            border: none; border-radius: 15px; color: white;
+            transition: all 0.1s; flex: 1; font-family: inherit;
+        }
+        
+        .btn-blue { background-color: #2196f3; box-shadow: 0 6px 0 #1565c0; }
+        .btn-blue:active { transform: translateY(6px); box-shadow: 0 0 0 #1565c0; }
+        
+        .btn-green { background-color: #4caf50; box-shadow: 0 6px 0 #2e7d32; }
+        .btn-green:active { transform: translateY(6px); box-shadow: 0 0 0 #2e7d32; }
+        
+        .btn-red { background-color: #f44336; box-shadow: 0 6px 0 #c62828; font-size: 18px; padding: 15px; }
+        .btn-red:active { transform: translateY(6px); box-shadow: 0 0 0 #c62828; }
+        
+        /* 角色 */
+        .character {
+            position: absolute; 
+            width: var(--char-size); 
+            height: auto;
+            transform-origin: center; will-change: transform;
+            cursor: pointer; transition: filter 0.2s; z-index: 10;
+        }
+        .character:hover {
+            filter: brightness(1.2) drop-shadow(0 0 15px rgba(255,235,59,0.8)); z-index: 100;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="bg-layer"></div>
+
+    <button id="showUiBtn" onclick="toggleUI(true)">👁️ 打開魔法面板</button>
+
+    <div id="ui-layer">
+        <div class="header-row">
+            <h1>🎈 歡樂角色大遊行</h1>
+            <button class="close-btn" onclick="toggleUI(false)" title="隱藏面板">✖</button>
+        </div>
+        <p>目前人數：<span id="char-count">0</span> / <span id="max-limit-display">50</span> 隻 👾<br><span style="font-size: 13px; color: #888; font-weight: normal;">(💡 用滑鼠戳泡泡可以刪除角色)</span></p>
+        
+        <div class="control-panel">
+            <label for="limitSlider">🚥 人數上限 (防卡頓)：<span id="limitValue">50</span></label>
+            <input type="range" id="limitSlider" min="5" max="100" value="50" step="1">
+
+            <label for="sizeSlider">🔍 全體角色大小：<span id="sizeValue">250px</span></label>
+            <input type="range" id="sizeSlider" min="100" max="600" value="250" step="10">
+        </div>
+
+        <div class="btn-group">
+            <div class="row">
+                <input type="file" id="gifInput" accept="image/gif" multiple style="display: none;">
+                <input type="file" id="bgInput" accept="image/*" style="display: none;">
+                
+                <button class="action-btn btn-blue" onclick="document.getElementById('gifInput').click()">📥 加自己的圖</button>
+                <button class="action-btn btn-green" onclick="document.getElementById('bgInput').click()">🖼️ 換漂亮背景</button>
+            </div>
+            <button class="action-btn btn-red" onclick="clearWall()">🗑️ 清空雲端所有怪物</button>
+        </div>
+    </div>
+
+    <div id="wall"></div>
+
+    <script>
+        // ==========================================
+        // 🔑 初始化 Firebase (已替換為新帳號設定)
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCmqMjq3Yj5mHhl9DHw8gOTCQRaBf2mXZU",
+            authDomain: "characterwall-5281c.firebaseapp.com",
+            databaseURL: "https://characterwall-5281c-default-rtdb.firebaseio.com",
+            projectId: "characterwall-5281c",
+            storageBucket: "characterwall-5281c.firebasestorage.app",
+            messagingSenderId: "664878195051",
+            appId: "1:664878195051:web:816a47ffc01e9c50c3ac2e",
+            measurementId: "G-RLDWG8F73S"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        // ==========================================
+
+        const wall = document.getElementById('wall');
+        const countText = document.getElementById('char-count');
+        const maxLimitDisplay = document.getElementById('max-limit-display');
+        let charactersList = []; 
+        let maxCharactersLimit = 50; 
+
+        // 面板隱藏/顯示控制
+        function toggleUI(show) {
+            const uiLayer = document.getElementById('ui-layer');
+            const showBtn = document.getElementById('showUiBtn');
+            if (show) {
+                uiLayer.classList.remove('hidden'); showBtn.style.display = 'none';
+            } else {
+                uiLayer.classList.add('hidden'); showBtn.style.display = 'block';
+            }
+        }
+
+        // 綁定大小調整拉桿
+        const sizeSlider = document.getElementById('sizeSlider');
+        const sizeValueText = document.getElementById('sizeValue');
+        sizeSlider.addEventListener('input', function(e) {
+            const newSize = e.target.value + 'px';
+            sizeValueText.innerText = newSize;
+            document.documentElement.style.setProperty('--char-size', newSize);
+        });
+
+        // 綁定人數上限拉桿
+        const limitSlider = document.getElementById('limitSlider');
+        const limitValueText = document.getElementById('limitValue');
+        limitSlider.addEventListener('input', function(e) {
+            maxCharactersLimit = parseInt(e.target.value);
+            limitValueText.innerText = maxCharactersLimit;
+            maxLimitDisplay.innerText = maxCharactersLimit;
+            // 觸發一次資料更新，讓系統砍掉超出上限的舊角色
+            db.ref('characters').once('value', snapshot => processCloudData(snapshot.val()));
+        });
+
+        // 物理引擎
+        class MovingCharacter {
+            constructor(id, base64Image) {
+                this.id = id; 
+                this.element = document.createElement('img');
+                this.element.src = base64Image;
+                this.element.className = 'character';
+                this.element.title = "點我消除！👆";
+                
+                this.x = Math.random() * (window.innerWidth - 250);
+                this.y = Math.random() * (window.innerHeight - 250);
+                
+                let randomSpeedX = Math.random() * 4 + 0.5; 
+                let randomSpeedY = Math.random() * 4 + 0.5; 
+                this.vx = (Math.random() > 0.5 ? 1 : -1) * randomSpeedX;
+                this.vy = (Math.random() > 0.5 ? 1 : -1) * randomSpeedY;
+
+                // 點擊消除
+                this.element.addEventListener('click', () => {
+                    db.ref('characters/' + this.id).remove();
+                });
+
+                wall.appendChild(this.element);
+            }
+
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                
+                const currentWidth = this.element.offsetWidth || 250;
+                const currentHeight = this.element.offsetHeight || 250;
+
+                if (this.x <= 0 || this.x >= window.innerWidth - currentWidth) this.vx *= -1;
+                if (this.y <= 0 || this.y >= window.innerHeight - currentHeight) this.vy *= -1;
+                
+                let scaleX = this.vx > 0 ? 1 : -1;
+                this.element.style.transform = `translate(${this.x}px, ${this.y}px) scaleX(${scaleX})`;
+            }
+        }
+
+        // ==========================================
+        // 📡 雲端即時監聽系統
+        // ==========================================
+        function processCloudData(data) {
+            let cloudGifs = [];
+            if (data) {
+                for (let key in data) {
+                    cloudGifs.push({ id: key, data: data[key].data, timestamp: data[key].timestamp });
+                }
+                cloudGifs.sort((a, b) => a.timestamp - b.timestamp);
+
+                if (cloudGifs.length > maxCharactersLimit) {
+                    const oldestId = cloudGifs[0].id;
+                    db.ref('characters/' + oldestId).remove();
+                    return; 
+                }
+            }
+
+            let activeIds = new Set(cloudGifs.map(g => g.id));
+
+            for (let i = charactersList.length - 1; i >= 0; i--) {
+                if (!activeIds.has(charactersList[i].id)) {
+                    charactersList[i].element.remove(); 
+                    charactersList.splice(i, 1);        
+                }
+            }
+
+            let renderedIds = new Set(charactersList.map(c => c.id));
+            cloudGifs.forEach(charObj => {
+                if (!renderedIds.has(charObj.id)) {
+                    charactersList.push(new MovingCharacter(charObj.id, charObj.data));
+                }
+            });
+
+            countText.innerText = charactersList.length;
+        }
+
+        db.ref('characters').on('value', (snapshot) => {
+            processCloudData(snapshot.val());
+        });
+
+        // ==========================================
+        // 工具按鈕功能
+        // ==========================================
+        function clearWall() {
+            if(confirm("確定要清空雲端所有的怪物嗎？💣 (所有 iPad 上的畫面都會一起消失喔！)")) {
+                db.ref('characters').remove();
+            }
+        }
+
+        document.getElementById('gifInput').addEventListener('change', function(e) {
+            const files = e.target.files;
+            if (!files.length) return;
+
+            for(let file of files) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    db.ref('characters').push({
+                        data: event.target.result,
+                        timestamp: firebase.database.ServerValue.TIMESTAMP
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+            e.target.value = ''; 
+        });
+
+        document.getElementById('bgInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                document.getElementById('bg-layer').style.backgroundImage = `url('${event.target.result}')`;
+            };
+            reader.readAsDataURL(file);
+            e.target.value = ''; 
+        });
+
+        function animate() {
+            charactersList.forEach(char => char.update());
+            requestAnimationFrame(animate);
+        }
+        animate();
+    </script>
+</body>
+</html>
