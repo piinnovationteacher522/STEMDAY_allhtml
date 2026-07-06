@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的互動程式作品集</title>
+    <title>我的互動程式與作品集</title>
     <style>
         body { font-family: '微軟正黑體', sans-serif; background-color: #f4f4f9; padding: 20px; text-align: center; }
         h1 { color: #333; }
@@ -12,25 +12,82 @@
             display: block; padding: 15px; background-color: #007bff; color: white; 
             text-decoration: none; border-radius: 8px; font-size: 18px; font-weight: bold;
             transition: background 0.3s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        a:hover { background-color: #0056b3; }
+        /* 針對圖片按鈕設定不同的顏色，方便區分 */
+        a.img-link { background-color: #28a745; }
+        a.img-link:hover { background-color: #218838; }
+        a:hover { background-color: #0056b3; transform: translateY(-2px); }
+        .loading { color: #666; font-style: italic; }
     </style>
 </head>
 <body>
 
-    <h1>🎮 我的互動程式作品集</h1>
-    <p>請點擊下方按鈕選擇要開啟的應用程式：</p>
+    <h1>🎮 我的作品大廳</h1>
+    <p id="status-text" class="loading">正在努力尋找好玩的程式與圖片中... 🔍</p>
 
-    <div class="menu">
-        <a href="神奇動畫機(drive2).html" target="_blank">🎨 神奇動畫機</a>
-        <a href="歡樂角色大遊行(drive2).html" target="_blank">🎈 歡樂角色大遊行</a>
-        <a href="AI手控學習機械臂(1).html" target="_blank">🤖 AI手控學習機械臂</a>
-        <a href="水果分類機_v2.html" target="_blank">🍎 水果分類機 v2</a>
-        <a href="simple FPV keyboard control.html" target="_blank">⌨️ 簡單 FPV 鍵盤控制</a>
-        <a href="simple FPV control.html" target="_blank">🏎️ 簡單 FPV 控制</a>
-        <a href="多人跳躍游戲.html" target="_blank">🦆 多人跳躍遊戲</a>
-        <a href="跳躍大師.html" target="_blank">🏃‍♂️ 跳躍大師</a>
-    </div>
+    <div class="menu" id="menu">
+        </div>
+
+    <script>
+        // ==========================================
+        // ⚠️ 請在這裡填入你的 GitHub 資訊！
+        // ==========================================
+        const githubUser = "piinnovationteacher522";       // 例如: "john123"
+        const githubRepo = "STEMDAY_allhtml"; // 例如: "my-web-projects"
+        // ==========================================
+
+        const apiUrl = `https://api.github.com/repos/${githubUser}/${githubRepo}/contents/`;
+
+        fetch(apiUrl)
+            .then(response => {
+                if (!response.ok) throw new Error("找不到資料夾，請檢查帳號與儲存庫名稱是否正確！");
+                return response.json();
+            })
+            .then(data => {
+                const menu = document.getElementById('menu');
+                const statusText = document.getElementById('status-text');
+                
+                statusText.innerText = "請點擊下方按鈕選擇要開啟的作品：";
+                statusText.classList.remove('loading');
+                
+                let hasFiles = false;
+
+                data.forEach(file => {
+                    const fileName = file.name.toLowerCase();
+                    const isHtml = fileName.endsWith('.html') && file.name !== 'index.html';
+                    const isPng = fileName.endsWith('.png');
+
+                    // 如果是 HTML 或是 PNG，就建立按鈕
+                    if (isHtml || isPng) {
+                        hasFiles = true;
+                        const link = document.createElement('a');
+                        link.href = file.name;
+                        link.target = "_blank"; // 點擊後在新分頁開啟
+                        
+                        // 根據檔案類型給予不同的圖示和樣式
+                        if (isHtml) {
+                            let displayName = file.name.replace(/\.html$/i, '');
+                            link.innerText = `✨ ${displayName}`;
+                        } else if (isPng) {
+                            let displayName = file.name.replace(/\.png$/i, '');
+                            link.innerText = `🖼️ ${displayName}`;
+                            link.classList.add('img-link'); // 套用綠色按鈕樣式
+                        }
+                        
+                        menu.appendChild(link);
+                    }
+                });
+
+                if (!hasFiles) {
+                    statusText.innerText = "目前資料夾裡還沒有上傳作品喔！";
+                }
+            })
+            .catch(error => {
+                document.getElementById('status-text').innerText = `❌ 發生錯誤：${error.message}`;
+                console.error(error);
+            });
+    </script>
 
 </body>
 </html>
