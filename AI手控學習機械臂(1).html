@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手勢控制機械臂（X=0–1800 對應 S1=0–180°）</title>
+    <style>
+        body { margin:0; padding:0; background:#000; overflow:hidden; font-family:Arial, sans-serif; }
+        canvas { position:fixed; top:0; left:0; width:100vw; height:100vh; }
+
+        /* 上方資訊列 */
+        #infoBar {
+            position: fixed;
+            top: 40px;
+            left: 60px;
+            background: rgba(0,0,0,0.75);
+            color: white;
+            padding: 12px 22px;
+            border-radius: 28px;
+            font-size: 19px;
+            font-weight: bold;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+        #gesture { font-size: 28px; margin: 0 10px; }
+        
+        /* 連線按鈕 */
+        .connect-btn {
+            background: #0066ff;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 15px;
+            transition: 0.3s;
+        }
+        .connect-btn:hover { filter: brightness(1.2); }
+        .connect-btn.connected { background: #00aa00; pointer-events: none; }
+        .connect-btn.connecting { background: #ffaa00; pointer-events: none; }
+        .connect-btn:disabled { background: #555; cursor: not-allowed; }
+
+        /* 下方錄製與播放控制列 */
+        #controlsBar {
+            position: fixed;
+            top: 40px;
+            right: 24px;
+            background: rgba(0,0,0,0.75);
+            padding: 10px 14px;
+            border-radius: 22px;
+            z-index: 100;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+            backdrop-filter: blur(12px);
+            max-width: calc(100vw - 48px);
+        }
+        .action-btn {
+            background: #444;
+            color: white;
+            border: none;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 13px;
+            white-space: nowrap;
+            transition: 0.3s;
+        }
+        .action-btn:hover { filter: brightness(1.2); }
+        
+        /* 自訂按鈕顏色 */
+        #recordBtn { background: #cc0000; }
+        #playBtn { background: #00aa00; }
+        #stopBtn { background: #dd6600; }
+        
+        #recordStatus {
+            color: white;
+            font-weight: bold;
+            font-size: 13px;
+            margin-left: 0;
+            line-height: 1.2;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        /* 方框外暗化層 */
+        #overlayDark {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        /* 綠色刻度 */
+        .tick {
+            position: absolute;
+            background: #00FF00;
+            pointer-events: none;
+            z-index: 200;
+        }
+        .tick-label {
+            position: absolute;
+            color: #00FF00;
+            font-size: 14px;
+            font-weight: bold;
+            pointer-events: none;
+            user-select: none;
+            z-index: 200;
+        }
+    </style>
+</head>
+<body>
+
+    <video id="video" autoplay playsinline muted style="display:none;"></video>
+    <canvas id="canvas"></canvas>
+
+    <div id="overlayDark"></div>
+
+    <div id="infoBar">
+        <div>
+            <span id="gesture">STOP</span> • 
+            <span id="coords">X: 900 | S1: 90° | Y: 500</span>
+        </div>
+        <button id="connectBleBtn" class="connect-btn">藍牙連接</button>
+        <button id="connectUsbBtn" class="connect-btn">USB 連接</button>
+    </div>
+
+    <div id="controlsBar">
+        <button id="recordBtn" class="action-btn">⚫ 錄製動作</button>
+        <button id="playBtn" class="action-btn">▶️ 執行學習動作</button>
+        <button id="stopBtn" class="action-btn">🛑 停止傳遞</button>
+        <span id="recordStatus">狀態：待機中 (可按空白鍵錄製)</span>
+    </div>
+
+    <div id="xTicks"></div>
+    <div id="yTicks"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+    <script>
+        // 保持原本的 X 範圍 0 至 1800；Y 範圍為 0 至 1000。
+        const VIRTUAL_WIDTH  = 1800;
+        const VIRTUAL_HEIGHT = 1000;
+
+        // 相機下方最後 10% 容易遺失手部追蹤，因此把「感應到的 Y=900」
+        // 重新對應為畫面／控制上的 Y=1000。手不用移到相機最底部。
+        const SENSOR_Y_MAX = 900;
+        const SENSOR_Y_REACHABLE_RATIO = SENSOR_Y_MAX / VIRTUAL_HEIGHT; // 0.90
+
+        // 依照你現有的 micro:bit 程式：
+        // l/r = (收到的 X - 300) × 0.15，然後控制 S1（0° 至 180°）。
+        // 因此：
+        //   畫面 X = 0    → 傳送 300  → S1 = 0°
+        //   畫面 X = 900  → 傳送 900  → S1 = 90°
+        //   畫面 X = 1800 → 傳送 1500 → S1 = 180°
+        // 不需要修改 micro:bit 程式，只由 HTML 轉換傳送數字。
+        const MICROBIT_X_MIN = 300;
+        const MICROBIT_X_SCALE = 0.15;
+        const X_SERVO_MIN_DEGREE = 0;
+        const X_SERVO_MAX_DEGREE = 180;
+        const MICROBIT_X_MAX = Math.round(
+            MICROBIT_X_MIN + (X_SERVO_MAX_DEGREE - X_SERVO_MIN_DEGREE) / MICROBIT_X_SCALE
+        ); // 1500
+
+        // u/d = (收到的 Y - 200) × 0.1125，S0 使用 0° 至 100°。
+        const MICROBIT_Y_MIN = 200;
+        const MICROBIT_Y_MAX = 1089;
+
+        // 訊號穩定設定：手部座標先平滑，再限制為每秒最多 20 次即時傳送。
+        const SMOOTHING_ALPHA = 0.28;
+        const LIVE_SEND_INTERVAL_MS = 50;
+        const CONTROL_DEADBAND = 2;
+
+        // 顯示／控制範圍：相機畫面只會顯示在此範圍內，外面保持黑色。
+        // 上下保留區改為依照實際 UI 高度動態計算，避免和資訊列重疊。
+        const DETECT_WIDTH_RATIO = 0.96;
+        const DETECT_HEIGHT_RATIO = 0.86;
+        const DETECT_SIDE_MARGIN = 10;
+        const UI_SAFE_GAP = 16;
+
+        // 手掌到達相機可穩定感應的 Y=900 位置時，固定輸出 Y = 1000。
+        const LOWEST_HAND_Y_RATIO = SENSOR_Y_REACHABLE_RATIO;
+
+        /* ==================== 連線控制 (藍牙 & USB) ==================== */
+        const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+        const UART_RX_UUID      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+        let connectionType = null; // 'ble' 或 'usb'
+        let rxChar = null;         // 藍牙物件
+        let serialWriter = null;   // USB 物件
+
+        const connectBleBtn = document.getElementById("connectBleBtn");
+        const connectUsbBtn = document.getElementById("connectUsbBtn");
+
+        // 藍牙連接
+        async function connectMicrobitBLE() {
+            connectBleBtn.textContent = "搜尋中...";
+            connectBleBtn.className = "connect-btn connecting";
+            connectUsbBtn.disabled = true; // 禁用另一個連線方式
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: "BBC micro:bit" }],
+                    optionalServices: [UART_SERVICE_UUID]
+                });
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(UART_SERVICE_UUID);
+                rxChar = await service.getCharacteristic(UART_RX_UUID);
+                
+                connectionType = 'ble';
+                connectBleBtn.textContent = "藍牙已連接";
+                connectBleBtn.className = "connect-btn connected";
+            } catch (err) {
+                connectBleBtn.textContent = "藍牙連接";
+                connectBleBtn.className = "connect-btn";
+                connectUsbBtn.disabled = false;
+                console.error(err);
+            }
+        }
+        
+        // USB 連接 (Web Serial)
+        async function connectMicrobitUSB() {
+            if (!("serial" in navigator)) {
+                alert("您的瀏覽器不支援 Web Serial API，請使用 Google Chrome 或 Edge。");
+                return;
+            }
+
+            connectUsbBtn.textContent = "連接中...";
+            connectUsbBtn.className = "connect-btn connecting";
+            connectBleBtn.disabled = true; // 禁用另一個連線方式
+            try {
+                const port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 }); // micro:bit 預設鮑率
+                serialWriter = port.writable.getWriter();
+                
+                connectionType = 'usb';
+                connectUsbBtn.textContent = "USB 已連接";
+                connectUsbBtn.className = "connect-btn connected";
+            } catch (err) {
+                connectUsbBtn.textContent = "USB 連接";
+                connectUsbBtn.className = "connect-btn";
+                connectBleBtn.disabled = false;
+                console.error(err);
+            }
+        }
+
+        connectBleBtn.addEventListener("click", connectMicrobitBLE);
+        connectUsbBtn.addEventListener("click", connectMicrobitUSB);
+
+        function clamp(value, min, max) {
+            return Math.min(Math.max(value, min), max);
+        }
+
+        function mapRange(value, inputMin, inputMax, outputMin, outputMax) {
+            const safeValue = clamp(value, inputMin, inputMax);
+            const ratio = (safeValue - inputMin) / (inputMax - inputMin);
+            return outputMin + ratio * (outputMax - outputMin);
+        }
+
+        // 將畫面座標轉為目前 micro:bit 程式需要的資料格式。
+        // X 會精準對應：0 / 900 / 1800 → S1 的 0° / 90° / 180°。
+        // Y=0 / 500 / 1000 則傳送 200 / 645 / 1089，
+        // 讓 micro:bit 的 S0 對應約為 0° / 50° / 100°。
+        function buildMicrobitMessage(gestureCode, controlX, controlY) {
+            const serialX = Math.round(
+                mapRange(controlX, 0, VIRTUAL_WIDTH, MICROBIT_X_MIN, MICROBIT_X_MAX)
+            );
+            const serialY = Math.round(
+                mapRange(controlY, 0, VIRTUAL_HEIGHT, MICROBIT_Y_MIN, MICROBIT_Y_MAX)
+            );
+            return `${gestureCode},${serialX},${serialY}\n`;
+        }
+
+        /* ==================== 錄製與重播邏輯 ==================== */
+        let isRecording = false;
+        let isPlaying = false;
+        let isStandby = false;
+
+        let recordingStartTime = 0;
+        let recordingTimeoutId = null;
+        let recordedCommands = []; 
+        let playbackTimers = [];   
+
+        const recordStatusEl = document.getElementById("recordStatus");
+        const recordBtn = document.getElementById("recordBtn");
+        const playBtn = document.getElementById("playBtn");
+        const stopBtn = document.getElementById("stopBtn");
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                toggleRecording();
+            }
+        });
+        recordBtn.addEventListener('click', toggleRecording);
+
+        function toggleRecording() {
+            if (isPlaying) return;
+            
+            if (isStandby) {
+                isStandby = false;
+                updateStopBtnUI();
+            }
+
+            if (isRecording) {
+                isRecording = false;
+                clearTimeout(recordingTimeoutId);
+                recordBtn.textContent = "⚫ 錄製動作";
+                recordBtn.style.background = "#cc0000";
+                recordStatusEl.textContent = `記錄完成！共 ${recordedCommands.length} 筆`;
+                recordStatusEl.style.color = "#00FF00";
+            } else {
+                isRecording = true;
+                recordedCommands = [];
+                recordingStartTime = Date.now();
+                recordBtn.textContent = "⏹ 停止錄製";
+                recordBtn.style.background = "#ff3333";
+                recordStatusEl.textContent = "🔴 錄製中... (5秒後自動結束)";
+                recordStatusEl.style.color = "#FF4444";
+
+                recordingTimeoutId = setTimeout(() => {
+                    if (isRecording) toggleRecording();
+                }, 5000);
+            }
+        }
+
+        // --- 訊號傳送：以「最新一筆優先」避免藍牙／USB 因每一影格都排隊而延遲 ---
+        let livePendingMessage = null;
+        let liveSendTimer = null;
+        let lastLiveMessage = "";
+        let lastLiveSendTime = 0;
+        let transportQueue = Promise.resolve();
+
+        function handleConnectionError(error) {
+            console.error("發送失敗", error);
+
+            if (connectionType === 'ble') {
+                connectBleBtn.textContent = "已斷線";
+                connectBleBtn.className = "connect-btn";
+                connectUsbBtn.disabled = false;
+                rxChar = null;
+            } else if (connectionType === 'usb') {
+                connectUsbBtn.textContent = "已斷線";
+                connectUsbBtn.className = "connect-btn";
+                connectBleBtn.disabled = false;
+                serialWriter = null;
+            }
+            connectionType = null;
+            livePendingMessage = null;
+            lastLiveMessage = "";
+        }
+
+        async function writeTransport(msgString) {
+            if (isStandby || !connectionType) return;
+
+            const data = new TextEncoder().encode(msgString);
+            if (connectionType === 'ble' && rxChar) {
+                await rxChar.writeValueWithoutResponse(data);
+            } else if (connectionType === 'usb' && serialWriter) {
+                await serialWriter.write(data);
+            }
+        }
+
+        // 所有寫入依序完成；即使偶爾上一筆尚未送完，也不會同時寫入同一條連線。
+        function sendData(msgString) {
+            transportQueue = transportQueue
+                .then(() => writeTransport(msgString))
+                .catch((error) => {
+                    handleConnectionError(error);
+                });
+            return transportQueue;
+        }
+
+        function recordSentCommand(msgString) {
+            if (!isRecording) return;
+            const delay = Date.now() - recordingStartTime;
+            const lastRecord = recordedCommands[recordedCommands.length - 1];
+
+            // 錄製時忽略完全重複的連續訊號，播放會更順暢。
+            if (!lastRecord || lastRecord.msg !== msgString) {
+                recordedCommands.push({ delay, msg: msgString });
+            }
+        }
+
+        function flushLiveMessage() {
+            liveSendTimer = null;
+            const msgString = livePendingMessage;
+            livePendingMessage = null;
+
+            if (!msgString || isStandby || !connectionType || msgString === lastLiveMessage) return;
+
+            lastLiveMessage = msgString;
+            lastLiveSendTime = performance.now();
+            recordSentCommand(msgString);
+            sendData(msgString);
+        }
+
+        function queueLiveMessage(msgString, forceNow = false) {
+            if (isStandby || !connectionType) return;
+
+            // 座標和手勢均沒有改變時不重複傳送，減少 micro:bit 接收佇列壓力。
+            if (msgString === lastLiveMessage && !livePendingMessage) return;
+            livePendingMessage = msgString;
+
+            const elapsed = performance.now() - lastLiveSendTime;
+            if (forceNow || elapsed >= LIVE_SEND_INTERVAL_MS) {
+                if (liveSendTimer) {
+                    clearTimeout(liveSendTimer);
+                    liveSendTimer = null;
+                }
+                flushLiveMessage();
+                return;
+            }
+
+            if (!liveSendTimer) {
+                liveSendTimer = setTimeout(flushLiveMessage, LIVE_SEND_INTERVAL_MS - elapsed);
+            }
+        }
+
+        function processAndSendGesture(gestureCode, controlX, controlY) {
+            const msg = buildMicrobitMessage(gestureCode, controlX, controlY);
+
+            // 到達任何邊界或手勢改變時立即傳送；其他時間保持 20 Hz 的穩定頻率。
+            const atBoundary =
+                controlX <= 0 || controlX >= VIRTUAL_WIDTH ||
+                controlY <= 0 || controlY >= VIRTUAL_HEIGHT;
+            const gestureChanged = !lastLiveMessage || !lastLiveMessage.startsWith(`${gestureCode},`);
+
+            queueLiveMessage(msg, atBoundary || gestureChanged);
+        }
+
+        // --- 播放功能 ---
+        playBtn.addEventListener('click', () => {
+            if (isRecording) toggleRecording(); 
+            if (recordedCommands.length === 0) {
+                alert("目前沒有已記錄的動作！請先按下錄製動作。");
+                return;
+            }
+            if (isPlaying) return;
+
+            isStandby = false;
+            updateStopBtnUI();
+
+            isPlaying = true;
+            recordStatusEl.textContent = "▶️ 播放中... (即時手勢已鎖定)";
+            recordStatusEl.style.color = "#0066FF";
+            playbackTimers = [];
+
+            recordedCommands.forEach(cmd => {
+                const timerId = setTimeout(async () => {
+                    if (isPlaying && !isStandby) {
+                        await sendData(cmd.msg);
+                    }
+                }, cmd.delay);
+                playbackTimers.push(timerId);
+            });
+
+            const maxDelay = recordedCommands[recordedCommands.length - 1].delay;
+            const endTimerId = setTimeout(() => {
+                if (isPlaying) {
+                    isPlaying = false;
+                    recordStatusEl.textContent = `播放結束！(已恢復手部控制)`;
+                    recordStatusEl.style.color = "#00FF00";
+                }
+            }, maxDelay + 100);
+            playbackTimers.push(endTimerId);
+        });
+
+        // --- 停止與待機功能 ---
+        stopBtn.addEventListener('click', () => {
+            if (isStandby) {
+                isStandby = false;
+                recordStatusEl.textContent = "狀態：已恢復手部即時控制";
+                recordStatusEl.style.color = "#ffffff";
+            } else {
+                isStandby = true;
+                
+                if (isRecording) toggleRecording(); 
+                
+                if (isPlaying) {
+                    isPlaying = false;
+                    playbackTimers.forEach(id => clearTimeout(id));
+                    playbackTimers = [];
+                }
+                
+                recordStatusEl.textContent = "狀態：已停止傳遞 (待機模式)";
+                recordStatusEl.style.color = "#aaaaaa";
+            }
+            updateStopBtnUI();
+        });
+
+        function updateStopBtnUI() {
+            if (isStandby) {
+                stopBtn.textContent = "✅ 恢復手控";
+                stopBtn.style.background = "#aaaa00";
+            } else {
+                stopBtn.textContent = "🛑 停止傳遞";
+                stopBtn.style.background = "#dd6600";
+            }
+        }
+
+        /* ==================== 畫面與偵測範圍 ==================== */
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const gestureEl = document.getElementById('gesture');
+        const coordsEl = document.getElementById('coords');
+        const overlayDark = document.getElementById('overlayDark');
+        const infoBar = document.getElementById('infoBar');
+        const controlsBar = document.getElementById('controlsBar');
+        const xTicksEl = document.getElementById('xTicks');
+        const yTicksEl = document.getElementById('yTicks');
+
+        let lastVirtualX = Math.round(VIRTUAL_WIDTH / 2);
+        let lastVirtualY = Math.round(VIRTUAL_HEIGHT / 2);
+
+        let boxX = 0, boxY = 0, boxW = 0, boxH = 0;
+        let layoutUpdatePending = false;
+        let lastLayoutSignature = '';
+
+        function updateDetectArea() {
+            const infoRect = infoBar.getBoundingClientRect();
+            const controlsRect = controlsBar.getBoundingClientRect();
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            const availableTop = Math.max(infoRect.bottom, controlsRect.bottom) + UI_SAFE_GAP;
+            const availableBottom = controlsRect.top - UI_SAFE_GAP;
+            const availableHeight = Math.max(160, viewportHeight - availableTop - UI_SAFE_GAP);
+            const sideMargin = Math.max(DETECT_SIDE_MARGIN, viewportWidth * ((1 - DETECT_WIDTH_RATIO) / 2));
+            const nextBoxW = Math.max(220, viewportWidth - sideMargin * 2);
+            const nextBoxH = Math.min(Math.max(160, viewportHeight * DETECT_HEIGHT_RATIO), availableHeight);
+            const nextBoxX = (viewportWidth - nextBoxW) / 2;
+            const nextBoxY = availableTop;
+            const layoutSignature = [
+                viewportWidth,
+                viewportHeight,
+                Math.round(infoRect.bottom),
+                Math.round(controlsRect.top),
+                Math.round(nextBoxW),
+                Math.round(nextBoxH),
+                Math.round(nextBoxX),
+                Math.round(nextBoxY)
+            ].join(':');
+
+            if (layoutSignature === lastLayoutSignature) return;
+            lastLayoutSignature = layoutSignature;
+
+            if (canvas.width !== viewportWidth) canvas.width = viewportWidth;
+            if (canvas.height !== viewportHeight) canvas.height = viewportHeight;
+
+            boxW = nextBoxW;
+            boxH = nextBoxH;
+            boxX = nextBoxX;
+            boxY = nextBoxY;
+
+            // 不再用半透明遮罩「蓋住」整個相機畫面；
+            // 相機影像會在 onResults() 直接裁切到控制範圍內。
+            overlayDark.textContent = '';
+
+            drawVirtualTicksInBox();
+        }
+
+        function scheduleLayoutUpdate() {
+            if (layoutUpdatePending) return;
+            layoutUpdatePending = true;
+            requestAnimationFrame(() => {
+                layoutUpdatePending = false;
+                updateDetectArea();
+            });
+        }
+
+        window.addEventListener('resize', scheduleLayoutUpdate);
+        if ('ResizeObserver' in window) {
+            const layoutObserver = new ResizeObserver(() => scheduleLayoutUpdate());
+            layoutObserver.observe(infoBar);
+            layoutObserver.observe(controlsBar);
+        }
+        updateDetectArea();
+
+        function drawVirtualTicksInBox() {
+            const xStep = 200;
+            const yStep = 200;
+
+            xTicksEl.innerHTML = '';
+            yTicksEl.innerHTML = '';
+
+            for (let vx = 0; vx <= VIRTUAL_WIDTH; vx += xStep) {
+                // X 維持原本完整控制範圍。
+                const screenX = boxX + (vx / VIRTUAL_WIDTH) * boxW;
+                const t = document.createElement('div'); t.className = 'tick';
+                t.style.left = screenX + 'px'; t.style.top = boxY + 'px';
+                t.style.width = '2px'; t.style.height = '30px';
+                xTicksEl.appendChild(t);
+
+                const l = document.createElement('div'); l.className = 'tick-label';
+                l.textContent = vx; l.style.left = (screenX + 5) + 'px'; l.style.top = (boxY + 35) + 'px';
+                xTicksEl.appendChild(l);
+            }
+
+            for (let vy = 0; vy <= VIRTUAL_HEIGHT; vy += yStep) {
+                // Y=1000 的刻度放在相機仍可穩定感應的 Y=900 位置。
+                const screenY = boxY + (vy / VIRTUAL_HEIGHT) * SENSOR_Y_REACHABLE_RATIO * boxH;
+                const t = document.createElement('div'); t.className = 'tick';
+                t.style.top = screenY + 'px'; t.style.left = boxX + 'px';
+                t.style.height = '2px'; t.style.width = '30px';
+                yTicksEl.appendChild(t);
+
+                const l = document.createElement('div'); l.className = 'tick-label';
+                l.textContent = vy; l.style.left = (boxX + 35) + 'px'; l.style.top = (screenY - 8) + 'px';
+                yTicksEl.appendChild(l);
+            }
+        }
+
+        function getGestureCode(gesture) {
+            return gesture === "open" ? 2 : gesture === "close" ? 1 : 0;
+        }
+
+        // 使用四個手掌根部的平均位置作控制點，比單用手腕更穩定。
+        // 當手移到畫面底部、手腕部分被鏡頭裁走時，手掌中心仍較容易被辨識。
+        function getPalmControlPoint(landmarks) {
+            const palmIndices = [5, 9, 13, 17]; // 食指、中指、無名指、小指的掌根
+            const point = palmIndices.reduce(
+                (sum, index) => ({
+                    x: sum.x + landmarks[index].x,
+                    y: sum.y + landmarks[index].y
+                }),
+                { x: 0, y: 0 }
+            );
+
+            return {
+                x: point.x / palmIndices.length,
+                y: point.y / palmIndices.length
+            };
+        }
+
+        // 將 16:9 相機畫面以「填滿」方式放入控制框，並裁掉多出的邊緣。
+        // 這樣相機影像不會跑到綠色刻度範圍以外。
+        function getCameraRenderRect(image) {
+            const sourceW = image.videoWidth || image.width || 1280;
+            const sourceH = image.videoHeight || image.height || 720;
+            const scale = Math.max(boxW / sourceW, boxH / sourceH);
+            const width = sourceW * scale;
+            const height = sourceH * scale;
+
+            return {
+                x: boxX + (boxW - width) / 2,
+                y: boxY + (boxH - height) / 2,
+                width,
+                height
+            };
+        }
+
+        function drawCameraAndHand(results, landmarks) {
+            const render = getCameraRenderRect(results.image);
+
+            // 只在偵測範圍內繪製鏡像相機畫面。
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(boxX, boxY, boxW, boxH);
+            ctx.clip();
+            ctx.translate(render.x + render.width, render.y);
+            ctx.scale(-1, 1);
+            ctx.drawImage(results.image, 0, 0, render.width, render.height);
+            ctx.restore();
+
+            if (landmarks) {
+                // 將 MediaPipe 的骨架座標同步縮放至相機顯示範圍內。
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(boxX, boxY, boxW, boxH);
+                ctx.clip();
+                ctx.translate(render.x + render.width, render.y);
+                ctx.scale(-render.width / canvas.width, render.height / canvas.height);
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 6});
+                drawLandmarks(ctx, landmarks, {color: '#FF00FF', lineWidth: 2, radius: 8});
+                ctx.restore();
+            }
+
+            return render;
+        }
+
+        function detectGesture(landmarks) {
+            if (!landmarks) return "stop";
+            const wrist = landmarks[0];
+            const tips = [4,8,12,16,20];
+            const mcp  = [2,5,9,13,17];
+            let open = 0, close = 0;
+            for (let i = 0; i < 5; i++) {
+                const tipDist = Math.hypot(landmarks[tips[i]].x - wrist.x, landmarks[tips[i]].y - wrist.y);
+                const baseDist = Math.hypot(landmarks[mcp[i]].x - wrist.x, landmarks[mcp[i]].y - wrist.y);
+                if (tipDist > baseDist * 1.4) open++;
+                else close++;
+            }
+            if (open >= 4) return "open";
+            if (close >= 4) return "close";
+            return "stop";
+        }
+
+        function onResults(results) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            let currentGesture = "stop";
+            let virtualX = lastVirtualX;
+            let virtualY = lastVirtualY;
+            const lm = results.multiHandLandmarks?.[0] || null;
+
+            // 相機及手部骨架都會被裁切在綠色刻度的控制範圍內。
+            const render = drawCameraAndHand(results, lm);
+
+            if (lm) {
+                const palm = getPalmControlPoint(lm);
+
+                // 根據「裁切後相機畫面」取得手掌在畫面中的位置。
+                const screenX = render.x + (1 - palm.x) * render.width;
+                const screenY = render.y + palm.y * render.height;
+
+                // X 必須位於控制範圍內。Y 在相機可穩定追蹤到 90% 高度時，
+                // 已會輸出控制 Y=1000，不需要把手伸到相機最底部。
+                if (screenX >= boxX && screenX <= boxX + boxW) {
+                    const relativeX = clamp((screenX - boxX) / boxW, 0, 1);
+                    const relativeY = clamp((screenY - boxY) / boxH, 0, 1);
+
+                    // X 維持完整範圍；Y 在實際可感應的 0 至 900 範圍內，
+                    // 重新拉伸為畫面與控制上的 0 至 1000。
+                    const targetX = Math.round(relativeX * VIRTUAL_WIDTH);
+                    const targetY = Math.round(
+                        clamp(relativeY / SENSOR_Y_REACHABLE_RATIO, 0, 1) * VIRTUAL_HEIGHT
+                    );
+
+                    // 手部座標平滑：一般位置減少抖動；到達邊界則立即到位。
+                    const nextX = (targetX === 0 || targetX === VIRTUAL_WIDTH)
+                        ? targetX
+                        : lastVirtualX + (targetX - lastVirtualX) * SMOOTHING_ALPHA;
+                    const nextY = (targetY === 0 || targetY === VIRTUAL_HEIGHT)
+                        ? targetY
+                        : lastVirtualY + (targetY - lastVirtualY) * SMOOTHING_ALPHA;
+
+                    virtualX = Math.round(nextX);
+                    virtualY = Math.round(nextY);
+
+                    // 非常細小的畫面抖動不更新控制值，避免伺服馬達不停震動。
+                    if (Math.abs(virtualX - lastVirtualX) < CONTROL_DEADBAND) virtualX = lastVirtualX;
+                    if (Math.abs(virtualY - lastVirtualY) < CONTROL_DEADBAND) virtualY = lastVirtualY;
+
+                    lastVirtualX = virtualX;
+                    lastVirtualY = virtualY;
+                    currentGesture = detectGesture(lm);
+                }
+            }
+
+            if (isStandby) {
+                gestureEl.textContent = "待機中";
+                gestureEl.style.color = "#aaaaaa";
+                coordsEl.textContent = "暫停發送訊號";
+            } else if (isPlaying) {
+                gestureEl.textContent = "播放中";
+                gestureEl.style.color = "#0066ff";
+                coordsEl.textContent = "已鎖定即時控制";
+            } else {
+                gestureEl.textContent = currentGesture.toUpperCase();
+                const xServoDegree = Math.round(
+                    mapRange(virtualX, 0, VIRTUAL_WIDTH, X_SERVO_MIN_DEGREE, X_SERVO_MAX_DEGREE)
+                );
+                coordsEl.textContent = `X: ${virtualX} | S1: ${xServoDegree}° | Y: ${virtualY}${virtualY >= VIRTUAL_HEIGHT ? "（最低）" : ""}`;
+                gestureEl.style.color = 
+                    currentGesture === "open"  ? "#00ff00" :
+                    currentGesture === "close" ? "#ff0066" : "#ffaa00";
+
+                const code = getGestureCode(currentGesture);
+                processAndSendGesture(code, virtualX, virtualY);
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.8,
+            minTrackingConfidence: 0.8
+        });
+        hands.onResults(onResults);
+
+        const camera = new Camera(document.getElementById('video'), {
+            onFrame: async () => await hands.send({image: document.getElementById('video')}),
+            width: 1280,
+            height: 720
+        });
+        camera.start();
+    </script>
+</body>
+</html>
