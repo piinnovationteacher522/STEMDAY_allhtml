@@ -19,18 +19,25 @@
         }
 
         body, html { 
-            margin: 0; padding: 0; height: 100%; 
+            margin: 0; padding: 0; 
+            /* 使用 dvh 解決手機瀏覽器網址列遮擋問題，vh 為舊版相容 */
+            height: 100vh; height: 100dvh; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background: var(--light); color: #333; overflow: hidden; 
             user-select: none; -webkit-user-select: none;
         }
         
-        /* 全螢幕介面樣式 (已放大並徹底置中) */
+        /* -------------------------------------------
+           全螢幕介面樣式 
+           ------------------------------------------- */
         .fullscreen-panel { 
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            position: fixed; top: 0; left: 0; width: 100vw; 
+            height: 100vh; height: 100dvh;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             background: var(--light); box-sizing: border-box; padding: 40px 20px; z-index: 30;
             text-align: center;
+            /* 當螢幕過小(如橫向)時允許上下滑動，避免被截斷 */
+            overflow-y: auto; overflow-x: hidden;
         }
         
         .fullscreen-panel h2 { font-size: 48px; margin-bottom: 20px; color: var(--dark); font-weight: 600; }
@@ -63,8 +70,10 @@
         .fullscreen-panel .status-text { font-size: 18px; margin-top: 10px; font-weight: 500; text-align: center; }
         .divider { width: 100%; max-width: 400px; border-top: 2px solid var(--border); margin: 30px auto; }
 
-        /* 遙控介面與視訊元件 */
-        .video-container { position: relative; width: 100vw; height: 100vh; display: none; background: #000; z-index: 10; overflow: hidden; }
+        /* -------------------------------------------
+           遙控介面與視訊元件 
+           ------------------------------------------- */
+        .video-container { position: relative; width: 100vw; height: 100vh; height: 100dvh; display: none; background: #000; z-index: 10; overflow: hidden; }
         .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; transform: none; }
         .local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 133px; object-fit: cover; border: 2px solid #fff; border-radius: 6px; z-index: 12; background: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: scaleX(-1); }
         
@@ -96,6 +105,32 @@
         .status-default { color: #6c757d; }
         .status-success { color: var(--success); }
         .status-error { color: var(--danger); }
+
+        /* -------------------------------------------
+           手機與小螢幕響應式設定 (RWD) 
+           當螢幕寬度小於 600px 時自動縮小元件尺寸
+           ------------------------------------------- */
+        @media (max-width: 600px) {
+            .fullscreen-panel { padding: 20px 15px; }
+            .fullscreen-panel h2 { font-size: 32px; margin-bottom: 15px; }
+            .fullscreen-panel h3 { font-size: 28px; margin-bottom: 15px; }
+            .fullscreen-panel p { font-size: 16px; margin-bottom: 20px; }
+            .fullscreen-panel button { padding: 14px 20px; font-size: 18px; margin: 10px auto; }
+            .fullscreen-panel input[type="text"] { padding: 14px 16px; font-size: 20px; margin-bottom: 15px; }
+            .fullscreen-panel .code-box { font-size: 28px; padding: 15px; margin: 15px auto; }
+            .divider { margin: 20px auto; }
+            
+            /* 將疊加的介面縮小，避免在小螢幕上互相擋住 */
+            .overlay-ui { top: 10px; left: 10px; }
+            .info-card { width: 200px; padding: 10px 15px; font-size: 13px; }
+            
+            #joystick-zone { bottom: 40px; left: 30px; width: 140px; height: 140px; }
+            .local-video { width: 80px; height: 106px; bottom: 15px; right: 15px; }
+            
+            .emoji-bar { top: 10px; right: 10px; gap: 8px; }
+            .emoji-btn { width: 42px; height: 42px; font-size: 20px; }
+            .floating-emoji { font-size: 70px; }
+        }
     </style>
 </head>
 <body>
@@ -287,7 +322,6 @@ function handleDataReceived(data) {
     } else if (data.startsWith('E:')) {
         let emojiStr = data.substring(2);
         try {
-            // 防呆檢查：如果字串裡面包含 '%'，代表是新版傳過來有編碼過的字串，需要還原
             if (emojiStr.includes('%')) {
                 emojiStr = decodeURIComponent(emojiStr);
             }
@@ -312,7 +346,6 @@ function sendEmoji(emoji) {
     showFloatingEmoji(emoji); // 自己畫面上也顯示
     if (dataConn) {
         try {
-            // 安全編碼，解決特殊符號在傳輸中斷裂問題
             dataConn.send(`E:${encodeURIComponent(emoji)}`);
         } catch(e) {
             console.error("Emoji 傳送失敗:", e);
@@ -394,19 +427,16 @@ function setupJoystick() {
         size: 150 
     });
 
-    // 監聽搖桿操作，僅更新數值
     joystickManager.on('move', (evt, data) => {
         currentJoyX = data.vector.x * 100;
         currentJoyY = data.vector.y * 100;
     });
 
-    // 放開搖桿時歸零
     joystickManager.on('end', () => {
         currentJoyX = 0;
         currentJoyY = 0;
     });
 
-    // 啟動計時器：持續穩定傳送數據
     if (joystickInterval) clearInterval(joystickInterval);
     joystickInterval = setInterval(() => {
         if (dataConn) {
