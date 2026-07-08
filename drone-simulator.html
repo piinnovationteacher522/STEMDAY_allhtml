@@ -107,6 +107,7 @@
       <div class="optRow" id="styleRow">
         <button class="optBtn sel" data-v="real">🏞 逼真風格<small>柔和光影、霧氣、陰影</small></button>
         <button class="optBtn" data-v="pixel">🕹 像素風格<small>復古低解析度、明亮色塊</small></button>
+        <button class="optBtn" data-v="osm">📍 馬頭涌實景<small>OpenStreetMap 真實街道與建築(需網路)</small></button>
       </div>
     </div>
 
@@ -362,10 +363,260 @@ function cloudSprite(){
 }
 
 /* ================= 場景建立 ================= */
-function buildScene(style){
+const RING_R=4.2;
+let osmBuildings=[], worldLim=290;
+const spawnPos=new THREE.Vector3(0,0.12,0);
+
+function addRealSky(shadows){
+  scene.fog=new THREE.Fog(0xcfdde9, 70, 340);
+  const sky=new THREE.Mesh(new THREE.SphereGeometry(420,32,16),
+    new THREE.ShaderMaterial({
+      side:THREE.BackSide, depthWrite:false, fog:false,
+      uniforms:{ top:{value:new THREE.Color(0x3d7ec4)}, mid:{value:new THREE.Color(0x9ec4e0)}, bot:{value:new THREE.Color(0xe6eef2)} },
+      vertexShader:'varying vec3 vP; void main(){ vP=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader:'varying vec3 vP; uniform vec3 top,mid,bot;\n'+
+        'void main(){ float h=clamp(vP.y,0.0,1.0);\n'+
+        ' vec3 c=mix(bot,mid,smoothstep(0.0,0.12,h));\n'+
+        ' c=mix(c,top,smoothstep(0.12,0.65,h));\n'+
+        ' gl_FragColor=vec4(c,1.0); }'
+    }));
+  scene.add(sky);
+  for(let i=0;i<14;i++){
+    const cl=cloudSprite();
+    cl.scale.set(50+Math.random()*60, 18+Math.random()*18, 1);
+    cl.position.set(-260+Math.random()*520, 55+Math.random()*50, -260+Math.random()*520);
+    scene.add(cl);
+  }
+  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x51663f, 0.55));
+  scene.add(new THREE.AmbientLight(0xffffff,0.18));
+  const sun=new THREE.DirectionalLight(0xfff0d8, 1.35);
+  sun.position.set(55,85,35);
+  if(shadows){
+    sun.castShadow=true;
+    sun.shadow.mapSize.set(2048,2048);
+    sun.shadow.camera.left=-90; sun.shadow.camera.right=90;
+    sun.shadow.camera.top=90; sun.shadow.camera.bottom=-90;
+    sun.shadow.camera.far=260; sun.shadow.bias=-0.0004;
+  }
+  scene.add(sun);
+}
+
+function textSprite(txt,color,scale){
+  const c=document.createElement('canvas'); c.width=512; c.height=128;
+  const g=c.getContext('2d');
+  g.fillStyle='rgba(15,25,38,.82)';
+  g.beginPath(); g.moveTo(20,0); g.lineTo(492,0); g.quadraticCurveTo(512,0,512,20); g.lineTo(512,108);
+  g.quadraticCurveTo(512,128,492,128); g.lineTo(20,128); g.quadraticCurveTo(0,128,0,108); g.lineTo(0,20);
+  g.quadraticCurveTo(0,0,20,0); g.fill();
+  g.fillStyle=color||'#ffde59'; g.font='bold 60px sans-serif';
+  g.textAlign='center'; g.textBaseline='middle'; g.fillText(txt,256,68);
+  const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding;
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,depthWrite:false}));
+  const sc=scale||1; s.scale.set(14*sc,3.5*sc,1);
+  return s;
+}
+function numLabel(n){
+  const c=document.createElement('canvas'); c.width=c.height=128;
+  const g=c.getContext('2d');
+  g.fillStyle='rgba(20,30,44,.85)'; g.beginPath(); g.arc(64,64,58,0,7); g.fill();
+  g.strokeStyle='#ffd23d'; g.lineWidth=8; g.beginPath(); g.arc(64,64,54,0,7); g.stroke();
+  g.fillStyle='#ffffff'; g.font='bold 68px sans-serif';
+  g.textAlign='center'; g.textBaseline='middle'; g.fillText(n,64,70);
+  const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding;
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,depthWrite:false}));
+  s.scale.set(2.2,2.2,1);
+  return s;
+}
+function addRings(px, ringDefs){
+  rings=[]; ringHit=[]; scoreN=0; updateScore();
+  const poleMat = px? new THREE.MeshLambertMaterial({color:0x666e78})
+                    : new THREE.MeshStandardMaterial({color:0x666e78,roughness:.7,metalness:.3});
+  ringDefs.forEach(([x,y,z,ry],i)=>{
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(RING_R,0.45,px?10:24,px?28:72),
+      px?new THREE.MeshLambertMaterial({color:0xffd23d}):new THREE.MeshStandardMaterial({color:0xf3c93a,roughness:.35,metalness:.45,emissive:0x6a5408}));
+    ring.position.set(x,y,z); ring.rotation.y=ry;
+    ring.castShadow=!px; scene.add(ring);
+    const disc=new THREE.Mesh(new THREE.CircleGeometry(RING_R-0.5, px?28:56),
+      new THREE.MeshBasicMaterial({color:0xffe066,transparent:true,opacity:0.22,side:THREE.DoubleSide,depthWrite:false}));
+    disc.position.copy(ring.position); disc.rotation.y=ry;
+    scene.add(disc); ring._disc=disc;
+    const lab=numLabel(i+1);
+    lab.position.set(x, y+RING_R+1.4, z);
+    scene.add(lab); ring._label=lab;
+    const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,Math.max(0.5,y-RING_R),px?6:12), poleMat);
+    pole.position.set(x,Math.max(0.5,y-RING_R)/2,z); pole.castShadow=!px; scene.add(pole);
+    rings.push(ring); ringHit.push(false);
+  });
+}
+
+/* ---- OSM 資料載入(馬頭涌官立小學周邊) ---- */
+async function overpass(query){
+  const eps=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+  let err;
+  for(const ep of eps){
+    try{
+      const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body:'data='+encodeURIComponent(query)});
+      if(r.ok) return await r.json();
+      err=new Error('HTTP '+r.status);
+    }catch(e){ err=e; }
+  }
+  throw err||new Error('Overpass 無法連線');
+}
+async function loadOSM(onStatus){
+  onStatus&&onStatus('定位馬頭涌官立小學…');
+  let lat=22.3229, lon=114.1874; // 後備座標:九龍馬頭涌福祥街一帶
+  try{
+    const s=await overpass('[out:json][timeout:25];nwr["name"~"馬頭涌官立小學"](22.30,114.15,22.36,114.22);out center 6;');
+    let els=(s.elements||[]).filter(e=>e.tags&&e.tags.name);
+    const exact=els.find(e=>e.tags.name==='馬頭涌官立小學');
+    const el=exact||els[0];
+    if(el){ const c=el.center||el; if(c.lat){ lat=c.lat; lon=c.lon; } }
+  }catch(e){ /* 用後備座標 */ }
+  onStatus&&onStatus('下載周邊建築與道路資料…');
+  const q='[out:json][timeout:50];('+
+    'way["building"](around:600,'+lat+','+lon+');'+
+    'way["highway"](around:750,'+lat+','+lon+');'+
+    'way["natural"="water"](around:850,'+lat+','+lon+');'+
+    'way["leisure"~"park|pitch|playground|garden|sports_centre"](around:700,'+lat+','+lon+');'+
+    'way["amenity"="school"](around:650,'+lat+','+lon+');'+
+    ');out geom;';
+  const d=await overpass(q);
+  if(!d.elements||!d.elements.length) throw new Error('沒有取得地圖資料');
+  return {lat,lon,elements:d.elements};
+}
+
+function pointInPoly(x,z,pts){
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const xi=pts[i][0], zi=pts[i][1], xj=pts[j][0], zj=pts[j][1];
+    if(((zi>z)!==(zj>z)) && (x < (xj-xi)*(z-zi)/(zj-zi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+
+/* ---- 以 OSM 資料建構真實街區 ---- */
+function buildOSMWorld(data){
+  const lat0=data.lat, lon0=data.lon;
+  const mLat=110574, mLon=111320*Math.cos(lat0*Math.PI/180);
+  const toXZ=(la,lo)=>[(lo-lon0)*mLon, -(la-lat0)*mLat];
+  const S=1500, W=2048;
+
+  // ---- 地面畫布:道路/公園/水體/校園 ----
+  const cv=document.createElement('canvas'); cv.width=cv.height=W;
+  const g=cv.getContext('2d');
+  g.fillStyle='#8b917c'; g.fillRect(0,0,W,W);
+  const px2=(x,z)=>[(x/S+0.5)*W,(z/S+0.5)*W];
+  const pw=m=>m*(W/S);
+  const roads=[],parks=[],waters=[],schools=[],blds=[];
+  data.elements.forEach(el=>{
+    if(el.type!=='way'||!el.geometry||el.geometry.length<2) return;
+    const t=el.tags||{};
+    const pts=el.geometry.map(p=>toXZ(p.lat,p.lon));
+    if(t.building) blds.push({pts,t});
+    else if(t.highway) roads.push({pts,t});
+    else if(t.natural==='water') waters.push(pts);
+    else if(t.amenity==='school') schools.push({pts,t});
+    else if(t.leisure) parks.push(pts);
+  });
+  function path(pts){ g.beginPath(); pts.forEach(([x,z],i)=>{const q=px2(x,z); i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);}); }
+  function fillPoly(pts,color){ path(pts); g.closePath(); g.fillStyle=color; g.fill(); }
+  parks.forEach(p=>fillPoly(p,'#5f9150'));
+  schools.forEach(s=>fillPoly(s.pts,(s.t.name||'').indexOf('馬頭涌官立小學')>=0?'#e0c874':'#cfc6a4'));
+  waters.forEach(p=>fillPoly(p,'#5a8fb8'));
+  const rw=t=>{const h=t.highway;
+    return h==='motorway'||h==='trunk'?18: h==='primary'?15: h==='secondary'?12:
+           h==='tertiary'?10: h==='residential'||h==='unclassified'?8: h==='service'?5:
+           /footway|path|steps|pedestrian|cycleway/.test(h)?2.6:6; };
+  g.lineCap='round'; g.lineJoin='round';
+  roads.forEach(r=>{ g.strokeStyle='#4b5157'; g.lineWidth=pw(rw(r.t))+3; path(r.pts); g.stroke(); });
+  roads.forEach(r=>{
+    const foot=/footway|path|steps|pedestrian|cycleway/.test(r.t.highway);
+    g.strokeStyle=foot?'#a5ab97':'#6f757b'; g.lineWidth=pw(rw(r.t)); path(r.pts); g.stroke();
+  });
+  const tex=new THREE.CanvasTexture(cv); tex.encoding=THREE.sRGBEncoding; tex.anisotropy=8;
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(S,S), new THREE.MeshLambertMaterial({map:tex}));
+  ground.rotation.x=-Math.PI/2; scene.add(ground);
+
+  // ---- 建築擠出 ----
+  osmBuildings=[];
+  let schoolAnchor=null;
+  blds.slice(0,520).forEach(b=>{
+    const pts=b.pts; if(pts.length<3) return;
+    let h=parseFloat(b.t.height);
+    if(!h||isNaN(h)){ const lv=parseFloat(b.t['building:levels']); h=(lv&&!isNaN(lv))? lv*3.1 : 14+Math.random()*16; }
+    h=Math.max(4,Math.min(130,h));
+    const shape=new THREE.Shape();
+    pts.forEach(([x,z],j)=>{ j?shape.lineTo(x,-z):shape.moveTo(x,-z); });
+    const geo=new THREE.ExtrudeGeometry(shape,{depth:h,bevelEnabled:false});
+    geo.rotateX(-Math.PI/2);
+    const isSchool=(b.t.name||'').indexOf('馬頭涌官立小學')>=0;
+    let matB;
+    if(isSchool) matB=new THREE.MeshLambertMaterial({color:0xe8863c});
+    else{
+      const col=new THREE.Color().setHSL(0.09+Math.random()*0.03, 0.10+Math.random()*0.08, 0.52+Math.random()*0.16);
+      matB=new THREE.MeshLambertMaterial({color:col});
+    }
+    scene.add(new THREE.Mesh(geo,matB));
+    let minx=1e9,maxx=-1e9,minz=1e9,maxz=-1e9,cx=0,cz=0;
+    pts.forEach(([x,z])=>{ minx=Math.min(minx,x);maxx=Math.max(maxx,x);minz=Math.min(minz,z);maxz=Math.max(maxz,z); cx+=x; cz+=z; });
+    cx/=pts.length; cz/=pts.length;
+    osmBuildings.push({pts,minx,maxx,minz,maxz,h});
+    if(isSchool && !schoolAnchor) schoolAnchor={x:cx,z:cz,h};
+  });
+
+  // ---- 學校標示牌 ----
+  const lab=textSprite('馬頭涌官立小學','#ffde59',1.4);
+  if(schoolAnchor) lab.position.set(schoolAnchor.x, schoolAnchor.h+8, schoolAnchor.z);
+  else lab.position.set(0,34,0);
+  scene.add(lab);
+
+  // ---- 尋找空曠出生點(避免出生在大樓內) ----
+  const clear=(x,z,m)=>{
+    for(const b of osmBuildings){
+      if(x>b.minx-m&&x<b.maxx+m&&z>b.minz-m&&z<b.maxz+m) return false;
+    }
+    return true;
+  };
+  spawnPos.set(0,0.12,0);
+  outer:
+  for(let rr=0;rr<=100;rr+=6){
+    const steps=rr===0?1:12;
+    for(let s=0;s<steps;s++){
+      const a=s/steps*Math.PI*2;
+      const x=rr*Math.cos(a), z=rr*Math.sin(a);
+      if(clear(x,z,4.5)){ spawnPos.set(x,0.12,z); break outer; }
+    }
+  }
+  // 起降坪
+  const padMat=new THREE.MeshLambertMaterial({map:concreteTex()});
+  const pad=new THREE.Mesh(new THREE.CylinderGeometry(3.4,3.4,0.06,40), padMat);
+  pad.position.set(spawnPos.x,0.03,spawnPos.z); scene.add(pad);
+  const hMat=new THREE.MeshLambertMaterial({color:0xe8c94f});
+  [[-0.9,0,0.35,2.6],[0.9,0,0.35,2.6],[0,0,1.5,0.35]].forEach(([ox,oz,w2,d2])=>{
+    const bar=new THREE.Mesh(new THREE.BoxGeometry(w2,0.015,d2),hMat);
+    bar.position.set(spawnPos.x+ox,0.068,spawnPos.z+oz); scene.add(bar);
+  });
+
+  // ---- 圓環:沿出生點周邊配置,自動避開大樓高度 ----
+  const angles=[0,60,120,180,240,300], radii=[90,140,180,150,110,205];
+  const defs=angles.map((a,i)=>{
+    const x=spawnPos.x+radii[i]*Math.cos(a*Math.PI/180);
+    const z=spawnPos.z+radii[i]*Math.sin(a*Math.PI/180);
+    let top=0;
+    osmBuildings.forEach(b=>{
+      if(x>b.minx-12&&x<b.maxx+12&&z>b.minz-12&&z<b.maxz+12) top=Math.max(top,b.h);
+    });
+    return [x, Math.max(14, top+9), z, Math.random()*Math.PI];
+  });
+  return defs;
+}
+
+function buildScene(style, osmData){
   scene=new THREE.Scene();
   const px = style==='pixel';
   const rnd=(a,b)=>a+Math.random()*(b-a);
+  osmBuildings=[]; spawnPos.set(0,0.12,0); worldLim = style==='osm'? 560 : 290;
 
   if(px){
     /* ---- 像素風:明亮色塊 + 低解析度 ---- */
@@ -399,41 +650,15 @@ function buildScene(style){
       let x,z; do{ x=rnd(-150,150); z=rnd(-150,150);}while(Math.hypot(x,z)<15);
       t.position.set(x,0,z); scene.add(t);
     }
+    addRings(true, [[14,6,0,0],[30,7,-12,0.5],[44,10,6,1.0],[58,8,24,1.6],[44,14,44,2.4],[20,9,58,3.1]]);
+  }else if(style==='osm' && osmData){
+    /* ---- OSM 真實街區:馬頭涌一帶 ---- */
+    addRealSky(false);
+    const defs=buildOSMWorld(osmData);
+    addRings(false, defs);
   }else{
     /* ---- 逼真風:程序化貼圖 + 漸層天空 + 雲 + 柔和光影 ---- */
-    scene.fog=new THREE.Fog(0xcfdde9, 70, 340);
-
-    // 天空漸層球
-    const sky=new THREE.Mesh(new THREE.SphereGeometry(420,32,16),
-      new THREE.ShaderMaterial({
-        side:THREE.BackSide, depthWrite:false, fog:false,
-        uniforms:{ top:{value:new THREE.Color(0x3d7ec4)}, mid:{value:new THREE.Color(0x9ec4e0)}, bot:{value:new THREE.Color(0xe6eef2)} },
-        vertexShader:'varying vec3 vP; void main(){ vP=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-        fragmentShader:'varying vec3 vP; uniform vec3 top,mid,bot;\n'+
-          'void main(){ float h=clamp(vP.y,0.0,1.0);\n'+
-          ' vec3 c=mix(bot,mid,smoothstep(0.0,0.12,h));\n'+
-          ' c=mix(c,top,smoothstep(0.12,0.65,h));\n'+
-          ' gl_FragColor=vec4(c,1.0); }'
-      }));
-    scene.add(sky);
-    // 雲朵
-    for(let i=0;i<14;i++){
-      const cl=cloudSprite();
-      cl.scale.set(rnd(50,110), rnd(18,36), 1);
-      cl.position.set(rnd(-260,260), rnd(55,105), rnd(-260,260));
-      scene.add(cl);
-    }
-
-    scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x51663f, 0.55));
-    const amb=new THREE.AmbientLight(0xffffff,0.18); scene.add(amb);
-    const sun=new THREE.DirectionalLight(0xfff0d8, 1.35);
-    sun.position.set(55,85,35);
-    sun.castShadow=true;
-    sun.shadow.mapSize.set(2048,2048);
-    sun.shadow.camera.left=-90; sun.shadow.camera.right=90;
-    sun.shadow.camera.top=90; sun.shadow.camera.bottom=-90;
-    sun.shadow.camera.far=260; sun.shadow.bias=-0.0004;
-    scene.add(sun);
+    addRealSky(true);
 
     // 草地
     const ground=new THREE.Mesh(new THREE.PlaneGeometry(600,600),
@@ -444,7 +669,6 @@ function buildScene(style){
     const padMat=new THREE.MeshStandardMaterial({map:concreteTex(),roughness:.95});
     const pad=new THREE.Mesh(new THREE.CylinderGeometry(3.4,3.4,0.06,48), padMat);
     pad.position.y=0.03; pad.receiveShadow=true; scene.add(pad);
-    // H 字標線
     const hMat=new THREE.MeshStandardMaterial({color:0xe8c94f,roughness:.8});
     [[-0.9,0,0.35,2.6],[0.9,0,0.35,2.6],[0,0,1.5,0.35]].forEach(([x,z,w,d])=>{
       const bar=new THREE.Mesh(new THREE.BoxGeometry(w,0.015,d),hMat);
@@ -464,7 +688,6 @@ function buildScene(style){
       const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),[side,side,roof,roof,side,side]);
       let x,z; do{ x=rnd(-140,140); z=rnd(-140,140); }while(Math.hypot(x,z)<28);
       b.position.set(x,h/2,z); b.castShadow=true; b.receiveShadow=true; scene.add(b);
-      // 屋頂小機房
       const box=new THREE.Mesh(new THREE.BoxGeometry(w*0.3,1.1,d*0.3),roof);
       box.position.set(x+rnd(-w*0.2,w*0.2), h+0.55, z+rnd(-d*0.2,d*0.2));
       box.castShadow=true; scene.add(box);
@@ -488,49 +711,15 @@ function buildScene(style){
       let x,z; do{ x=rnd(-150,150); z=rnd(-150,150);}while(Math.hypot(x,z)<16);
       t.position.set(x,0,z); scene.add(t);
     }
+    addRings(false, [[14,6,0,0],[30,7,-12,0.5],[44,10,6,1.0],[58,8,24,1.6],[44,14,44,2.4],[20,9,58,3.1]]);
   }
-  // 穿越圓環(大尺寸、高可視性)
-  rings=[]; ringHit=[]; scoreN=0; updateScore();
-  const poleMat = px? new THREE.MeshLambertMaterial({color:0x666e78})
-                    : new THREE.MeshStandardMaterial({color:0x666e78,roughness:.7,metalness:.3});
-  const RING_R=4.2;
-  function numLabel(n){
-    const c=document.createElement('canvas'); c.width=c.height=128;
-    const g=c.getContext('2d');
-    g.fillStyle='rgba(20,30,44,.85)'; g.beginPath(); g.arc(64,64,58,0,7); g.fill();
-    g.strokeStyle='#ffd23d'; g.lineWidth=8; g.beginPath(); g.arc(64,64,54,0,7); g.stroke();
-    g.fillStyle='#ffffff'; g.font='bold 68px sans-serif';
-    g.textAlign='center'; g.textBaseline='middle'; g.fillText(n,64,70);
-    const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding;
-    const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,depthWrite:false}));
-    s.scale.set(2.2,2.2,1);
-    return s;
-  }
-  const ringDefs=[[14,6,0,0],[30,7,-12,0.5],[44,10,6,1.0],[58,8,24,1.6],[44,14,44,2.4],[20,9,58,3.1]];
-  ringDefs.forEach(([x,y,z,ry],i)=>{
-    const ring=new THREE.Mesh(new THREE.TorusGeometry(RING_R,0.45,px?10:24,px?28:72),
-      px?new THREE.MeshLambertMaterial({color:0xffd23d}):new THREE.MeshStandardMaterial({color:0xf3c93a,roughness:.35,metalness:.45,emissive:0x6a5408}));
-    ring.position.set(x,y,z); ring.rotation.y=ry;
-    ring.castShadow=!px; scene.add(ring);
-    // 半透明填充面:遠處也一眼看到要穿過的位置
-    const disc=new THREE.Mesh(new THREE.CircleGeometry(RING_R-0.5, px?28:56),
-      new THREE.MeshBasicMaterial({color:0xffe066,transparent:true,opacity:0.22,side:THREE.DoubleSide,depthWrite:false}));
-    disc.position.copy(ring.position); disc.rotation.y=ry;
-    scene.add(disc); ring._disc=disc;
-    // 編號牌
-    const lab=numLabel(i+1);
-    lab.position.set(x, y+RING_R+1.4, z);
-    scene.add(lab); ring._label=lab;
-    const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,y-RING_R,px?6:12), poleMat);
-    pole.position.set(x,(y-RING_R)/2,z); pole.castShadow=!px; scene.add(pole);
-    rings.push(ring); ringHit.push(false);
-  });
 
   buildDrone(px);
   scene.add(droneGroup);
+  drone.pos.copy(spawnPos);
 
-  camera=new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.05, 500);
-  camera.position.set(0,2.5,7);
+  camera=new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.05, 700);
+  camera.position.set(spawnPos.x, 2.5, spawnPos.z+7);
 }
 
 function buildDrone(px){
@@ -561,7 +750,7 @@ function buildDrone(px){
 function setupRenderer(){
   renderer=new THREE.WebGLRenderer({canvas, antialias: cfg.style!=='pixel'});
   applyResolution();
-  renderer.shadowMap.enabled = cfg.style!=='pixel';
+  renderer.shadowMap.enabled = cfg.style==='real';
   renderer.shadowMap.type=THREE.PCFSoftShadowMap;
   if(cfg.style!=='pixel'){
     renderer.outputEncoding=THREE.sRGBEncoding;
@@ -621,11 +810,18 @@ $('helpClose').onclick=()=>$('helpOverlay').classList.remove('show');
 function updateScore(){ $('score').textContent='🟡 穿環 '+scoreN+' / '+(rings.length||6); }
 
 function resetDrone(){
-  drone.pos.set(0,0.12,0); drone.vel.set(0,0,0);
+  drone.pos.copy(spawnPos); drone.vel.set(0,0,0);
   drone.yaw=0; drone.pitch=0; drone.roll=0;
   drone.armed=false; drone.flying=false; drone.crashed=false;
   drone.armGestureT=0; drone.disarmLowT=0;
+  camPos.set(spawnPos.x, 2.5, spawnPos.z+7);
   ringHit.fill(false); scoreN=0; updateScore();
+  rings.forEach(rg=>{
+    rg.material.color.set(0xf3c93a);
+    if(rg.material.emissive) rg.material.emissive.set(0x6a5408);
+    rg._disc.material.color.set(0xffe066);
+    if(rg._label) rg._label.material.opacity=1;
+  });
   holdMsg('馬達已上鎖<span id="armHint">雙桿「外八」或「內八」保持 1 秒解鎖起飛</span>');
 }
 function keyArmToggle(){
@@ -737,6 +933,23 @@ function physics(dt){
   /* --- 位置積分 --- */
   drone.pos.addScaledVector(drone.vel, dt);
 
+  /* --- OSM 大樓碰撞 --- */
+  if(osmBuildings.length){
+    for(const b of osmBuildings){
+      if(drone.pos.y < b.h+0.2 &&
+         drone.pos.x>b.minx-0.3 && drone.pos.x<b.maxx+0.3 &&
+         drone.pos.z>b.minz-0.3 && drone.pos.z<b.maxz+0.3 &&
+         pointInPoly(drone.pos.x,drone.pos.z,b.pts)){
+        drone.pos.addScaledVector(drone.vel,-dt*2.5);   // 彈回撞擊前位置
+        drone.vel.set(0,0,0);
+        drone.crashed=true; drone.armed=false; drone.flying=false;
+        holdMsg('💥 撞到大樓!<span id="armHint">原地外八/內八可重新解鎖,或按「↺ 重置」回起飛坪</span>',true);
+        break;
+      }
+    }
+    if(drone.crashed) { audioTick(0); return; }
+  }
+
   /* --- 地面 --- */
   if(drone.pos.y<0.12){
     const vImpact=-drone.vel.y;
@@ -761,9 +974,9 @@ function physics(dt){
     drone.disarmLowT=0;
     if(!drone.flying && drone.pos.y>0.3){ drone.flying=true; showMsg('🛫 起飛成功!'); }
   }
-  drone.pos.x=Math.max(-290,Math.min(290,drone.pos.x));
-  drone.pos.z=Math.max(-290,Math.min(290,drone.pos.z));
-  drone.pos.y=Math.min(120,drone.pos.y);
+  drone.pos.x=Math.max(-worldLim,Math.min(worldLim,drone.pos.x));
+  drone.pos.z=Math.max(-worldLim,Math.min(worldLim,drone.pos.z));
+  drone.pos.y=Math.min(160,drone.pos.y);
 
   /* --- 穿環判定 --- */
   rings.forEach((rg,i)=>{
@@ -835,14 +1048,30 @@ function tick(){
 }
 
 /* ================= 開始 ================= */
-$('startBtn').addEventListener('click',()=>{
+$('startBtn').addEventListener('click', async ()=>{
+  const btn=$('startBtn');
+  if(btn.disabled) return;
+  let osmData=null;
+  if(cfg.style==='osm'){
+    btn.disabled=true;
+    try{
+      osmData=await loadOSM(txt=>{ btn.textContent='⏳ '+txt; });
+    }catch(e){
+      btn.disabled=false; btn.textContent='開 始 飛 行';
+      cfg.style='real';
+      [...$('styleRow').children].forEach(x=>x.classList.toggle('sel',x.dataset.v==='real'));
+      alert('無法載入 OpenStreetMap 資料(請確認網路連線),已自動改用「逼真風格」虛構場景。\n\n'+(e&&e.message||''));
+    }
+  }
   $('startScreen').style.display='none';
   ['topLeft','topRight','telemetry','score','stickL','stickR'].forEach(id=>$(id).style.display='');
   $('topLeft').style.display='flex'; $('topRight').style.display='flex';
-  setupRenderer(); buildScene(cfg.style);
+  setupRenderer(); buildScene(cfg.style, osmData);
+  camPos.set(spawnPos.x, 2.5, spawnPos.z+7);
   setFMode(cfg.fmode); updateHandUI(); updateScore();
   running=true; clock.getDelta();
-  holdMsg('馬達已上鎖<span id="armHint">雙桿同時「外八」(左桿↙+右桿↘)或「內八」(左桿↘+右桿↙)保持 1 秒解鎖</span>');
+  holdMsg((cfg.style==='osm'?'📍 已載入馬頭涌一帶真實街區!注意避開大樓!<br>':'')+
+    '馬達已上鎖<span id="armHint">雙桿同時「外八」(左桿↙+右桿↘)或「內八」(左桿↘+右桿↙)保持 1 秒解鎖</span>');
   tick();
 });
 })();
