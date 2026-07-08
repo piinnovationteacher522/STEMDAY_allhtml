@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D AR Cute Animal Jump - 可愛卡通體感版</title>
-    <!-- 引入 TensorFlow.js 骨架偵測與 Three.js 引擎 -->
+    <title>3D AR Cute Animal Jump - 可愛卡通體感版 (優化+主畫面按鈕)</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
@@ -58,28 +57,27 @@
         }
         
         /* 用於絕對置中的 Flexbox 父級容器，徹底解耦動畫帶來的 Transform 覆蓋 Bug */
-        /* 這裡設定 top: 160px 讓文字固定在上方，避開 3D 舞台，只進行水平（左右）置中 */
         #center-msg-container {
             position: absolute; 
-            top: 160px; /* 固定在上方，剛好在計分板下方、3D 物件上方 */
+            top: 160px; 
             left: 0; 
             width: 100vw; 
             display: flex;
-            justify-content: center; /* 水平完美絕對置中 */
+            justify-content: center; 
             pointer-events: none;
-            z-index: 100;            /* 確保層級在最上層 */
+            z-index: 100;            
         }
 
-        /* 內層提示文字：專注於跳動動畫與可愛立體字體外觀 */
+        /* 內層提示文字 */
         #center-msg {
             color: #ffeb3b; 
             font-size: 46px; 
             font-weight: 900; 
             text-shadow: 4px 4px 0px #2c3e50, -1px -1px 0px #2c3e50, 1px -1px 0px #2c3e50, -1px 1px 0px #2c3e50, 1px 1px 0px #2c3e50; 
-            text-align: center; /* 內部多行文字置中 */
+            text-align: center; 
             animation: bounce 1.5s infinite alternate;
             pointer-events: none;
-            max-width: 90%; /* 防止過寬，在小螢幕時自動安全折行 */
+            max-width: 90%; 
         }
 
         /* Cute Wooden Board Leaderboard */
@@ -216,6 +214,33 @@
             box-shadow: 0 2px 0px #e65100, 0 6px 10px rgba(0,0,0,0.2);
         }
 
+        /* 新增：回到主畫面按鈕 */
+        #home-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #fff;
+            color: #e65100;
+            border: 4px solid #ffa726;
+            padding: 10px 20px;
+            font-size: 20px;
+            font-weight: bold;
+            border-radius: 20px;
+            cursor: pointer;
+            z-index: 100;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            pointer-events: auto;
+            transition: 0.1s;
+        }
+        #home-btn:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 6px 12px rgba(0,0,0,0.3); 
+        }
+        #home-btn:active { 
+            transform: translateY(2px); 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+        }
+
         .hidden { display: none !important; }
 
         @keyframes bounce {
@@ -242,9 +267,10 @@
     </div>
 
     <div class="ui-layer">
+        <button id="home-btn" class="hidden" onclick="returnToMainMenu()">🏠 回主畫面</button>
+
         <div id="score-boards-container"></div>
         
-        <!-- 全新置中容器：不再做垂直置中，僅將容器固定在 top: 160px，並進行完美水平置中 -->
         <div id="center-msg-container">
             <div id="center-msg" class="hidden">準備中...</div>
         </div>
@@ -272,6 +298,7 @@
         const setupScreen = document.getElementById('setup-screen');
         const scoreContainer = document.getElementById('score-boards-container');
         const leaderboardUI = document.getElementById('leaderboard');
+        const homeBtn = document.getElementById('home-btn');
         
         let gameState = "INIT"; 
         let beamSpeed = 1.0;    
@@ -293,7 +320,7 @@
         const clock = new THREE.Clock();
         const baseHeight = 1;
 
-        let detector;
+        let detector = null; // 初始化為 null 用來判斷是否已載入過
         let lastVideoTime = -1;
         let currentPoses = [];
 
@@ -309,11 +336,18 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
+        function returnToMainMenu() {
+            gameState = "INIT";
+            setupScreen.style.display = "flex";
+            msgElement.classList.add("hidden");
+            recordModal.style.display = "none";
+            homeBtn.classList.add("hidden");
+        }
+
         function startGameSetup(num) {
             maxPlayers = num;
             setupScreen.style.display = "none";
-            msgElement.innerHTML = "⏳ 載入 AI 系統中...";
-            msgElement.classList.remove("hidden");
+            homeBtn.classList.remove("hidden"); // 顯示回主畫面按鈕
             
             players = {};
             activePlayers = {};
@@ -331,7 +365,18 @@
                 scoreContainer.appendChild(div);
             }
 
-            initSystem();
+            // 如果沒有初始化過 AI，就執行完整初始化；否則直接重置場景
+            if (!detector) {
+                msgElement.innerHTML = "⏳ 載入 AI 系統中...";
+                msgElement.classList.remove("hidden");
+                initSystem();
+            } else {
+                initThreeJS();
+                gameState = "WAITING_FOR_JUMP";
+                msgElement.innerHTML = "<span style='font-size: 36px; display: block; margin-bottom: 8px;'>載入完成！</span><span style='color:#ffd54f; font-size: 24px; display: block;'>任一玩家跳起以開始</span>";
+                msgElement.style.color = "#4caf50";
+                msgElement.classList.remove("hidden");
+            }
         }
 
         function initThreeJS() {
@@ -340,11 +385,14 @@
             scene = new THREE.Scene();
 
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 19, 24); // 將相機拉近（原為 25, 30），使 3D 遊戲舞台在視覺上放大
+            camera.position.set(0, 19, 24); 
             camera.lookAt(0, 0, 0);
 
-            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true }); 
-            renderer.setClearColor(0x000000, 0); 
+            // 效能優化：關閉抗鋸齒 (antialias: false)
+            if (!renderer) {
+                renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false }); 
+                renderer.setClearColor(0x000000, 0); 
+            }
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.shadowMap.enabled = false; 
             container.appendChild(renderer.domElement);
@@ -355,7 +403,7 @@
             dirLight.position.set(10, 30, 20);
             scene.add(dirLight);
 
-            // 玻璃奶油底座：草綠色透明奶油島嶼 style
+            // 玻璃奶油底座
             const platGeo = new THREE.CylinderGeometry(16, 16, 1.2, 32);
             const platMat = new THREE.MeshStandardMaterial({ 
                 color: 0xa8e6cf, 
@@ -412,7 +460,7 @@
 
             scene.add(pivotGroup);
 
-            // 旋轉障礙桿：巨型草莓香草甜心捲/糖果棒棒
+            // 旋轉障礙桿
             beam = new THREE.Group();
             const segmentCount = 10;
             const segLength = 16 / segmentCount;
@@ -426,7 +474,6 @@
                 beam.add(segMesh);
             }
 
-            // 桿子末梢放一個可愛發光星星
             const starTip = new THREE.Mesh(new THREE.SphereGeometry(1.0, 16, 16), new THREE.MeshStandardMaterial({ color: 0xffeb3b, roughness: 0.2 }));
             starTip.position.set(16, 0, 0);
             beam.add(starTip);
@@ -460,7 +507,6 @@
                 const primaryParts = [];
 
                 if (animalType === 1) {
-                    // 🐰 粉紅兔兔 (Bunny)
                     const body = new THREE.Mesh(new THREE.SphereGeometry(0.9, 16, 16), bodyMat);
                     body.scale.set(1, 1.2, 1);
                     body.position.y = 0.5;
@@ -513,7 +559,6 @@
                     animalGroup.add(cheekR);
 
                 } else if (animalType === 2) {
-                    // 🐻 軟綿小熊 (Bear)
                     const body = new THREE.Mesh(new THREE.SphereGeometry(0.95, 16, 16), bodyMat);
                     body.position.y = 0.5;
                     animalGroup.add(body);
@@ -559,7 +604,6 @@
                     animalGroup.add(eyeR);
 
                 } else if (animalType === 3) {
-                    // 🐸 大眼小青蛙 (Frog)
                     const body = new THREE.Mesh(new THREE.SphereGeometry(0.95, 16, 16), bodyMat);
                     body.scale.set(1.1, 0.9, 1);
                     body.position.y = 0.5;
@@ -609,7 +653,6 @@
                     animalGroup.add(cheekR);
 
                 } else if (animalType === 4) {
-                    // 🦆 快樂小黃鴨 (Duck)
                     const body = new THREE.Mesh(new THREE.SphereGeometry(0.95, 16, 16), bodyMat);
                     body.scale.set(1.05, 0.95, 1.15);
                     body.position.y = 0.5;
@@ -654,7 +697,6 @@
                     animalGroup.add(cheekR);
                 }
 
-                // 色彩代理：在不更動原創重設與淘汰變色程式碼的情況下，動態分流變色
                 animalGroup.material = {
                     color: {
                         setHex: (hex) => {
@@ -697,7 +739,6 @@
             }
         }
 
-        // 效能優化：不繪製任何複雜骨架，僅留下放大的色彩骨架偵測點
         function drawSkeletons(poses, scaleX, scaleY) {
             poses.forEach((pose) => {
                 let assignedSlot = null;
@@ -741,7 +782,8 @@
         }
 
         async function initSystem() {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+            // 效能優化：低解析度相機 640x480
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
             videoElement.srcObject = stream;
             
             await new Promise((resolve) => { 
@@ -769,6 +811,7 @@
         }
 
         async function detectPoseLoop() {
+            // 只有在非 INIT 狀態才處理畫面偵測
             if (videoElement.currentTime !== lastVideoTime && gameState !== "INIT") {
                 lastVideoTime = videoElement.currentTime;
                 
@@ -814,7 +857,8 @@
                     currentPoses = [];
                 }
             }
-            setTimeout(detectPoseLoop, 1000 / 45); 
+            // 效能優化：降頻至 20fps
+            setTimeout(detectPoseLoop, 1000 / 20); 
         }
 
         function processPlayerInput(playerNum, pose) {
@@ -870,6 +914,7 @@
             requestAnimationFrame(threeJSLoop);
             const dt = clock.getDelta();
 
+            // 如果回到主畫面 (INIT)，就不要更新旋轉桿物理與死亡判定
             if (gameState === "PLAYING") {
                 beam.rotation.y += beamSpeed * dt;
                 beamSpeed += 0.1 * dt;
@@ -991,6 +1036,9 @@
         }
 
         function resetGame() {
+            // 如果玩家在這 3 秒內按了「回到主畫面」，就不執行重置邏輯
+            if (gameState === "INIT") return;
+
             for (let i = 1; i <= maxPlayers; i++) {
                 players[i].isDead = false;
                 players[i].score = 0;
