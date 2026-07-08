@@ -39,10 +39,10 @@
         /* 影片容器 */
         .video-container { position: relative; width: 100vw; height: 100vh; display: none; background: #000; z-index: 10; overflow: hidden; }
         
-        /* 遠端畫面「不反轉」，對方看到的是真實方向 */
+        /* 遠端畫面 */
         .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; transform: none; }
         
-        /* 本地子畫面「反轉」，像照鏡子一樣自然 */
+        /* 本地子畫面 */
         .local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 133px; object-fit: cover; border: 2px solid #fff; border-radius: 6px; z-index: 12; background: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: scaleX(-1); }
         
         /* 浮動 UI 控制層 */
@@ -124,12 +124,12 @@
     <video id="local-video" class="local-video" autoplay playsinline muted></video>
     
     <div class="emoji-bar" id="emoji-bar" style="display: none;">
-        <button class="emoji-btn" onclick="sendEmoji('👍')">👍</button>
-        <button class="emoji-btn" onclick="sendEmoji('❤️')">❤️</button>
-        <button class="emoji-btn" onclick="sendEmoji('😂')">😂</button>
-        <button class="emoji-btn" onclick="sendEmoji('😮')">😮</button>
-        <button class="emoji-btn" onclick="sendEmoji('💩')">💩</button>
-        <button class="emoji-btn" onclick="sendEmoji('🚗')">🚗</button>
+        <button class="emoji-btn" onclick="sendEmoji('like')">👍</button>
+        <button class="emoji-btn" onclick="sendEmoji('heart')">❤️</button>
+        <button class="emoji-btn" onclick="sendEmoji('laugh')">😂</button>
+        <button class="emoji-btn" onclick="sendEmoji('wow')">😮</button>
+        <button class="emoji-btn" onclick="sendEmoji('poop')">💩</button>
+        <button class="emoji-btn" onclick="sendEmoji('car')">🚗</button>
     </div>
 
     <div class="overlay-ui">
@@ -225,18 +225,27 @@ let localStream = null;
 let role = ''; 
 let joystickManager = null;
 
+// 定義 Emoji 代碼對照表，解決編碼截斷問題
+const EMOJI_MAP = {
+    'like': '👍',
+    'heart': '❤️',
+    'laugh': '😂',
+    'wow': '😮',
+    'poop': '💩',
+    'car': '🚗'
+};
+
 function showScreen(id) {
     ['home-panel', 'receiver-setup', 'controller-setup', 'telepresence-ui'].forEach(el => {
         document.getElementById(el).style.display = (el === id) ? 'block' : 'none';
     });
 }
 
-// 取得媒體串流 (強制要求 user 前置自拍鏡頭)
 async function getMedia(isReceiver) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, 
-            audio: !isReceiver // 接收端無聲，控制端有聲
+            audio: !isReceiver 
         });
         document.getElementById('local-video').srcObject = localStream;
     } catch (err) {
@@ -244,11 +253,11 @@ async function getMedia(isReceiver) {
     }
 }
 
-// 處理接收到的雙向數據 (Joystick 或 Emoji)
+// 處理接收到的資料 (現已改為接收 JSON Object)
 function handleDataReceived(data) {
-    if (data.startsWith('J:') && role === 'receiver') {
-        // 處理遙控器數據
-        const [x, y] = data.substring(2).split(',').map(Number);
+    if (data.type === 'joystick' && role === 'receiver') {
+        const x = data.x;
+        const y = data.y;
         
         let leftSpeed = (y + x) * 0.5;
         let rightSpeed = (y - x) * 0.5;
@@ -269,13 +278,15 @@ function handleDataReceived(data) {
         
         uBitManager.send(`${leftSpeed},${rightSpeed}`);
 
-    } else if (data.startsWith('E:')) {
-        // 處理對方發送過來的 Emoji
-        showFloatingEmoji(data.substring(2));
+    } else if (data.type === 'emoji') {
+        // 從對照表中把安全的英文 ID 轉換回表情符號
+        const emojiChar = EMOJI_MAP[data.id];
+        if (emojiChar) {
+            showFloatingEmoji(emojiChar);
+        }
     }
 }
 
-// 畫面浮動 Emoji 呈現函數
 function showFloatingEmoji(emoji) {
     const el = document.createElement('div');
     el.className = 'floating-emoji';
@@ -284,10 +295,10 @@ function showFloatingEmoji(emoji) {
     setTimeout(() => el.remove(), 2000);
 }
 
-// 發送 Emoji 給對方（移除了自己畫面的顯示）
-function sendEmoji(emoji) {
+// 傳送 Emoji：只傳送代碼，例如 { type: 'emoji', id: 'poop' }
+function sendEmoji(emojiId) {
     if (dataConn && dataConn.open) {
-        dataConn.send(`E:${emoji}`);
+        dataConn.send({ type: 'emoji', id: emojiId });
     }
 }
 
@@ -315,7 +326,6 @@ async function initReceiver() {
 
     peer.on('connection', (conn) => {
         dataConn = conn;
-        // 綁定數據接收事件
         conn.on('data', handleDataReceived);
     });
 }
@@ -344,7 +354,6 @@ function connectToReceiver() {
 
         dataConn = peer.connect(targetId);
         dataConn.on('open', () => {
-            // 控制端也必須綁定數據接收事件才能看到對方傳來的 Emoji
             dataConn.on('data', handleDataReceived);
         });
     });
@@ -371,15 +380,15 @@ function setupJoystick() {
         let x = data.vector.x * 100;
         let y = data.vector.y * 100;
         
-        // 搖桿數據加入 J: 前綴
+        // 改為傳送安全的 JSON Object
         if (dataConn && dataConn.open) {
-            dataConn.send(`J:${x.toFixed(1)},${y.toFixed(1)}`);
+            dataConn.send({ type: 'joystick', x: x, y: y });
         }
     });
 
     joystickManager.on('end', () => {
         if (dataConn && dataConn.open) {
-            dataConn.send("J:0,0");
+            dataConn.send({ type: 'joystick', x: 0, y: 0 });
         }
     });
 }
