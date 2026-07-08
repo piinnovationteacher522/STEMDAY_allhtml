@@ -25,9 +25,7 @@
             user-select: none; -webkit-user-select: none;
         }
         
-        /* -------------------------------------------
-           全螢幕介面樣式 (已放大並徹底置中) 
-           ------------------------------------------- */
+        /* 全螢幕介面樣式 (已放大並徹底置中) */
         .fullscreen-panel { 
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
@@ -65,9 +63,7 @@
         .fullscreen-panel .status-text { font-size: 18px; margin-top: 10px; font-weight: 500; text-align: center; }
         .divider { width: 100%; max-width: 400px; border-top: 2px solid var(--border); margin: 30px auto; }
 
-        /* -------------------------------------------
-           遙控介面與視訊元件 
-           ------------------------------------------- */
+        /* 遙控介面與視訊元件 */
         .video-container { position: relative; width: 100vw; height: 100vh; display: none; background: #000; z-index: 10; overflow: hidden; }
         .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; transform: none; }
         .local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 133px; object-fit: cover; border: 2px solid #fff; border-radius: 6px; z-index: 12; background: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: scaleX(-1); }
@@ -237,7 +233,6 @@ let localStream = null;
 let role = ''; 
 let joystickManager = null;
 
-// 用於持續發送搖桿數據的變數
 let currentJoyX = 0;
 let currentJoyY = 0;
 let joystickInterval = null;
@@ -266,7 +261,7 @@ function handleDataReceived(data) {
     if (typeof data !== 'string') return;
 
     if (data.startsWith('J:') && role === 'receiver') {
-        // --- 馬達控制與運算部分 (未做任何改動) ---
+        // --- 馬達控制與運算部分 (完全未改動) ---
         const [x, y] = data.substring(2).split(',').map(Number);
         
         let leftSpeed = (y + x) * 0.5;
@@ -290,13 +285,16 @@ function handleDataReceived(data) {
         // ------------------------------------------
 
     } else if (data.startsWith('E:')) {
-        // 處理收到的 Emoji，必須對字串解碼以還原複雜 Emoji
+        let emojiStr = data.substring(2);
         try {
-            const decodedEmoji = decodeURIComponent(data.substring(2));
-            showFloatingEmoji(decodedEmoji);
+            // 防呆檢查：如果字串裡面包含 '%'，代表是新版傳過來有編碼過的字串，需要還原
+            if (emojiStr.includes('%')) {
+                emojiStr = decodeURIComponent(emojiStr);
+            }
         } catch (e) {
             console.error("Emoji 解碼失敗:", e);
         }
+        showFloatingEmoji(emojiStr);
     }
 }
 
@@ -314,7 +312,7 @@ function sendEmoji(emoji) {
     showFloatingEmoji(emoji); // 自己畫面上也顯示
     if (dataConn) {
         try {
-            // 先針對 Emoji 進行 URI 編碼，避免複雜字元造成 WebRTC 傳送失敗或亂碼
+            // 安全編碼，解決特殊符號在傳輸中斷裂問題
             dataConn.send(`E:${encodeURIComponent(emoji)}`);
         } catch(e) {
             console.error("Emoji 傳送失敗:", e);
@@ -408,7 +406,7 @@ function setupJoystick() {
         currentJoyY = 0;
     });
 
-    // 啟動計時器：不管有沒有動作，每 100 毫秒強制傳送一次最新數據
+    // 啟動計時器：持續穩定傳送數據
     if (joystickInterval) clearInterval(joystickInterval);
     joystickInterval = setInterval(() => {
         if (dataConn) {
