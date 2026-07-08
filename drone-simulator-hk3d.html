@@ -22,6 +22,7 @@
   .panel h1 { font-size:clamp(22px,4.2vw,32px); letter-spacing:.05em; font-weight:800; }
   .panel h1 span { color:#5fd4ff; }
   .sub { margin-top:6px; color:#8fb2cd; font-size:13px; letter-spacing:.1em; }
+  
   .optGroup { margin-top:16px; }
   .optLabel { font-size:13px; color:#7fa8c6; letter-spacing:.18em; margin-bottom:8px; }
   .optRow { display:flex; gap:10px; flex-wrap:wrap; }
@@ -30,8 +31,22 @@
     font-size:15px; font-weight:600; transition:all .15s; }
   .optBtn small { display:block; font-weight:400; font-size:12px; color:#84a6c2; margin-top:3px; }
   .optBtn.sel { background:rgba(48,140,210,.28); border-color:#5fd4ff; color:#fff; }
-  .inputBox { width:100%; margin-top:6px; padding:11px 12px; border-radius:10px; font-size:14px;
+  
+  /* 搜尋欄位與下拉選單樣式 */
+  .search-row { display:flex; gap:8px; margin-top:6px; }
+  .inputBox { width:100%; padding:11px 12px; border-radius:10px; font-size:14px;
     background:rgba(10,22,36,.7); border:1.5px solid rgba(120,180,230,.3); color:#cfe4f7; }
+  .search-row .inputBox { flex:1; }
+  #searchLocBtn { padding:0 16px; border-radius:10px; background:rgba(48,150,230,.2); color:#5fd4ff; 
+    border:1px solid rgba(95,212,255,.4); font-weight:700; cursor:pointer; transition:all 0.2s; white-space:nowrap; }
+  #searchLocBtn:hover { background:rgba(48,150,230,.4); border-color:#5fd4ff; }
+  #searchResults { display:none; flex-direction:column; gap:2px; max-height:180px; overflow-y:auto; 
+    background:rgba(8,18,30,.95); border:1px solid rgba(120,180,230,.25); border-radius:10px; 
+    margin-top:8px; padding:6px; box-shadow:0 8px 20px rgba(0,0,0,.4); }
+  .loc-item { padding:10px 12px; border-radius:8px; cursor:pointer; transition:background .15s; }
+  .loc-item:hover { background:rgba(48,150,230,.25); }
+  .loc-item strong { display:block; font-size:14.5px; color:#e8f4ff; margin-bottom:4px; font-weight:600; }
+  .loc-item small { display:block; font-size:12px; color:#8fb2cd; line-height:1.4; }
   
   #startBtn { margin-top:20px; width:100%; padding:15px; border:none; border-radius:14px; cursor:pointer;
     font-size:17px; font-weight:800; letter-spacing:.22em; color:#04121e;
@@ -104,8 +119,12 @@
     <div class="sub">數據來源:香港特區政府地政總署「可視化三維地圖」(免費開放數據)</div>
 
     <div class="optGroup">
-      <div class="optLabel">起飛地點 (學校名稱搜尋)</div>
-      <input id="schoolInput" class="inputBox" type="text" placeholder="例如: 喇沙書院" value="馬頭涌官立小學">
+      <div class="optLabel">精確起飛地點搜尋</div>
+      <div class="search-row">
+        <input id="schoolInput" class="inputBox" type="text" placeholder="輸入地點或學校名稱並搜尋..." value="馬頭涌官立小學">
+        <button id="searchLocBtn">🔍 搜尋</button>
+      </div>
+      <div id="searchResults"></div>
     </div>
 
     <div class="optGroup">
@@ -127,7 +146,7 @@
 
     <div class="optGroup">
       <div class="optLabel">地政總署 API 金鑰 (可留空)</div>
-      <input id="apiKey" class="inputBox" type="text" placeholder="留空即用官方文件示範金鑰">
+      <input id="apiKey" class="inputBox" type="text" placeholder="留空即用官方文件示範金鑰" style="margin-top:6px;">
     </div>
 
     <button id="startBtn">開 始 飛 行</button>
@@ -194,10 +213,13 @@ const MODES={
 const drone={ x:0,y:0.12,z:0, vx:0,vy:0,vz:0, yaw:0,pitch:0,roll:0, gimbalPitch:0,
   armed:false, flying:false, crashed:false, armGestureT:0, disarmLowT:0, propSpin:0 };
 let viewer=null, tileset=null, running=false;
-let lat0=22.3229, lon0=114.1874, mLat=110574, mLon=111320*Math.cos(22.3229*Math.PI/180); // 預設防呆座標
-let originH=0; 
-let surfY=0;   
-let prevX=0, prevZ=0;
+
+// 定位相關變數
+let targetLat = 22.3229, targetLon = 114.1874; // 預設馬頭涌官立小學座標
+let isLocSelected = true; 
+let lat0 = 0, lon0 = 0, mLat = 110574, mLon = 111320; 
+
+let originH=0, surfY=0, prevX=0, prevZ=0;
 let droneEnts=[], excludeList=[];
 let lastT=performance.now();
 const camL={x:0,y:2.5,z:7};
@@ -212,6 +234,58 @@ function pickRow(rowId,key){
   });
 }
 pickRow('handRow','hand'); pickRow('modeRow','fmode');
+
+/* ================= 搜尋地點機制 ================= */
+$('schoolInput').addEventListener('input', () => { 
+  // 若使用者修改了文字，要求重新搜尋與點選
+  isLocSelected = false; 
+  $('searchResults').style.display = 'none';
+});
+
+$('schoolInput').addEventListener('keydown', e => { 
+  if(e.key === 'Enter') $('searchLocBtn').click(); 
+});
+
+$('searchLocBtn').addEventListener('click', async () => {
+  const q = $('schoolInput').value.trim();
+  const resBox = $('searchResults');
+  if(!q) return;
+  
+  resBox.style.display = 'flex';
+  resBox.innerHTML = '<div style="padding:15px; color:#8fb2cd; font-size:13px; text-align:center;">⏳ 搜尋地點中...</div>';
+
+  try {
+    // 呼叫 OpenStreetMap 的 Geocoding API，並限制結果在香港境內
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&countrycodes=hk&limit=8`);
+    const data = await res.json();
+
+    if(data.length === 0) {
+      resBox.innerHTML = '<div style="padding:15px; color:#ff8a7a; font-size:13px; text-align:center;">⚠ 找不到相近地點，請嘗試其他關鍵字</div>';
+      return;
+    }
+
+    resBox.innerHTML = '';
+    data.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'loc-item';
+      // 擷取地名的短名稱
+      const shortName = item.name || item.display_name.split(',')[0];
+      
+      div.innerHTML = `<strong>${shortName}</strong><small>${item.display_name}</small>`;
+      div.onclick = () => {
+        // 使用者點選後，更新輸入框並儲存真實座標
+        $('schoolInput').value = shortName;
+        targetLat = parseFloat(item.lat);
+        targetLon = parseFloat(item.lon);
+        isLocSelected = true;
+        resBox.style.display = 'none';
+      };
+      resBox.appendChild(div);
+    });
+  } catch (e) {
+    resBox.innerHTML = '<div style="padding:15px; color:#ff8a7a; font-size:13px; text-align:center;">⚠ 搜尋失敗，請檢查網路連線</div>';
+  }
+});
 
 /* ================= 虛擬搖桿 ================= */
 function makeStick(el){
@@ -321,7 +395,6 @@ function updateHandUI(){
 $('btnHand').onclick=()=>{ cfg.hand=cfg.hand==='US'?'JP':'US'; updateHandUI();
   showMsg('已切換為 '+(cfg.hand==='US'?'美國手 Mode 2':'日本手 Mode 1')); };
 
-// 雲台控制
 $('btnGimbalUp').onclick=()=>{ drone.gimbalPitch = Math.min(Math.PI/3, drone.gimbalPitch + 0.15); };
 $('btnGimbalDown').onclick=()=>{ drone.gimbalPitch = Math.max(-Math.PI/2, drone.gimbalPitch - 0.15); };
 
@@ -359,32 +432,6 @@ function disarmNow(){
 const lonOf=x=>lon0+x/mLon;
 const latOf=z=>lat0-z/mLat;
 function worldOf(x,y,z){ return Cesium.Cartesian3.fromDegrees(lonOf(x),latOf(z),originH+y); }
-
-/* ================= 地理定位 (動態搜尋學校) ================= */
-async function geocodeSchool(schoolName){
-  try{
-    const ctrl=new AbortController(); const tm=setTimeout(()=>ctrl.abort(),15000);
-    // 限制搜尋範圍在香港周邊
-    const q=`[out:json][timeout:15];nwr["name"~"${schoolName}"](22.15,113.83,22.56,114.44);out center 6;`;
-    const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',signal:ctrl.signal,
-      headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data='+encodeURIComponent(q)});
-    clearTimeout(tm);
-    if(r.ok){
-      const d=await r.json();
-      const els=(d.elements||[]).filter(e=>e.tags&&e.tags.name);
-      const el=els.find(e=>e.tags.name.includes(schoolName))||els[0];
-      if(el){ 
-        const c=el.center||el; 
-        if(c.lat){ 
-          lat0=c.lat; lon0=c.lon; 
-          mLat=110574; mLon=111320*Math.cos(lat0*Math.PI/180); 
-          return true; 
-        } 
-      }
-    }
-  }catch(e){ console.error(e); }
-  return false;
-}
 
 /* ================= 場景初始化 ================= */
 async function initScene(key,onStatus){
@@ -433,7 +480,7 @@ async function initScene(key,onStatus){
     if(rr&&rr[0]&&isFinite(rr[0].height)) originH=rr[0].height;
   }catch(e){}
 
-  // ---- 建立像樣的無人機實體 (機身 + 4 軸螺旋槳) ----
+  // ---- 無人機實體 (機身 + 4 軸螺旋槳) ----
   droneEnts=[]; excludeList=[];
   const posCb=new Cesium.CallbackProperty(()=>worldOf(drone.x,drone.y+0.1,drone.z),false);
   const oriCb=new Cesium.CallbackProperty(()=>{
@@ -448,14 +495,12 @@ async function initScene(key,onStatus){
       material:Cesium.Color.fromCssColorString('#404040') } });
   droneEnts.push(body); excludeList.push(body);
 
-  // 馬達與螺旋槳共用產生函數
   function addPropeller(lx, ly, lz, color) {
     const propCb = new Cesium.CallbackProperty(() => {
       const center = worldOf(drone.x, drone.y + 0.1, drone.z);
       const hpr = new Cesium.HeadingPitchRoll(-drone.yaw, drone.pitch, -drone.roll);
       const quat = Cesium.Transforms.headingPitchRollQuaternion(center, hpr);
       const matrix = Cesium.Matrix4.fromRotationTranslation(Cesium.Matrix3.fromQuaternion(quat), center);
-      // Cesium 本地坐標系 ENU (X向東=右，Y向北=前，Z向上)
       const localPt = new Cesium.Cartesian3(lx, ly, lz);
       return Cesium.Matrix4.multiplyByPoint(matrix, localPt, new Cesium.Cartesian3());
     }, false);
@@ -467,13 +512,11 @@ async function initScene(key,onStatus){
     droneEnts.push(prop); excludeList.push(prop);
   }
 
-  // 根據 X 軸右、Y 軸前，安置 4 顆螺旋槳 (紅色表示機頭前方)
   addPropeller(-0.22,  0.25, 0.06, Cesium.Color.RED.withAlpha(0.65));
   addPropeller( 0.22,  0.25, 0.06, Cesium.Color.RED.withAlpha(0.65));
   addPropeller(-0.22, -0.25, 0.06, Cesium.Color.BLACK.withAlpha(0.65));
   addPropeller( 0.22, -0.25, 0.06, Cesium.Color.BLACK.withAlpha(0.65));
 
-  // ---- 主迴圈掛在 Cesium 渲染前 ----
   viewer.scene.preUpdate.addEventListener(mainTick);
 }
 
@@ -640,7 +683,6 @@ function updateCamera(dt){
   }else{
     viewer.camera.setView({
       destination:worldOf(drone.x,drone.y+0.12,drone.z),
-      // 加入雲台傾角補償 (gimbalPitch)
       orientation:{heading:-drone.yaw, pitch:drone.pitch*0.55 + drone.gimbalPitch, roll:-drone.roll*0.55}
     });
   }
@@ -668,19 +710,21 @@ $('startBtn').addEventListener('click', async ()=>{
   const btn=$('startBtn');
   if(btn.disabled)return;
   
-  const sName = $('schoolInput').value.trim() || '香港';
-  btn.disabled=true;
-  btn.textContent='⏳ 搜尋「'+sName+'」座標中...';
-
-  // 1. 動態搜尋學校
-  const found = await geocodeSchool(sName);
-  if(!found) {
-    btn.disabled=false; btn.textContent='開 始 飛 行';
-    holdMsg('⚠ 找不到包含「'+sName+'」的地點，請嘗試其他名稱', true);
+  if(!isLocSelected) {
+    alert("⚠ 請先點擊「搜尋」並從列表中點選一個明確的起飛地點！");
     return;
   }
 
-  // 2. 初始化場景
+  btn.disabled=true;
+  const sName = $('schoolInput').value.trim();
+  btn.textContent='⏳ 載入地圖中...';
+
+  // 正式寫入目標座標
+  lat0 = targetLat;
+  lon0 = targetLon;
+  mLat = 110574; 
+  mLon = 111320 * Math.cos(lat0 * Math.PI / 180); 
+
   const key=$('apiKey').value.trim()||DEMO_KEY;
   try{
     await initScene(key, txt=>{ btn.textContent='⏳ '+txt; });
@@ -692,7 +736,6 @@ $('startBtn').addEventListener('click', async ()=>{
     return;
   }
 
-  // 3. 進入飛行介面
   $('startScreen').style.display='none';
   ['topLeft','topRight'].forEach(id=>$(id).style.display='flex');
   ['telemetry','stickL','stickR','attribution'].forEach(id=>$(id).style.display='block');
