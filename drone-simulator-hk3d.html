@@ -38,7 +38,7 @@
   .inputBox:focus { outline:none; border-color:#5fd4ff; box-shadow:0 0 8px rgba(95,212,255,0.3); }
   .inputBox::placeholder { color:#5c7f9c; font-weight:400; }
   
-  #searchResults { display:none; flex-direction:column; gap:2px; max-height:220px; overflow-y:auto; 
+  #searchResults { display:none; flex-direction:column; gap:2px; max-height:240px; overflow-y:auto; 
     background:rgba(8,18,30,.95); border:1px solid rgba(120,180,230,.3); border-radius:10px; 
     margin-top:6px; padding:6px; box-shadow:0 8px 24px rgba(0,0,0,.6); position: absolute; width: 100%; z-index: 101; }
   .loc-item { padding:10px 12px; border-radius:8px; cursor:pointer; transition:background .15s; }
@@ -54,7 +54,6 @@
     border-top:1px dashed rgba(120,180,230,.25); padding-top:10px; }
   .tips b{ color:#aacfeb; }
 
-  /* 以下 HUD 樣式維持不變 */
   .hud { position:fixed; z-index:20; color:#e8f4ff; }
   #topLeft { top:calc(10px + env(safe-area-inset-top)); left:calc(12px + env(safe-area-inset-left)); display:none; gap:8px; align-items:center; flex-wrap:wrap; }
   #topRight { top:calc(10px + env(safe-area-inset-top)); right:calc(12px + env(safe-area-inset-right)); display:none; gap:8px; align-items:center; flex-wrap:wrap; justify-content: flex-end;}
@@ -118,8 +117,8 @@
     <div class="sub">數據來源:香港特區政府地政總署「可視化三維地圖」(免費開放數據)</div>
 
     <div class="optGroup" style="z-index: 10;">
-      <div class="optLabel">📍 起飛地點搜尋 (輸入名稱自動提示)</div>
-      <input id="schoolInput" class="inputBox" type="text" placeholder="例如: 旺角 / 獅子山 / 喇沙書院..." autocomplete="off">
+      <div class="optLabel">📍 起飛地點搜尋 (政府官方地址庫)</div>
+      <input id="schoolInput" class="inputBox" type="text" placeholder="例如: 添馬 / 彌敦道 / 拔萃男書院..." autocomplete="off">
       <div id="searchResults"></div>
     </div>
 
@@ -143,7 +142,6 @@
     <button id="startBtn">開 始 飛 行</button>
 
     <div class="tips">
-      <b>如果找不到特定大樓：</b>建議輸入<b>街道名稱</b>或<b>大型屋苑/地標</b>，定位成功機率更高。<br>
       <b>起飛說明：</b> 雙桿同時「外八」或「內八」保持 1 秒解鎖馬達。可降落在真實大樓天台，撞牆會自動停止或墜機。
     </div>
   </div>
@@ -207,7 +205,7 @@ let viewer=null, tileset=null, running=false;
 
 // 定位相關變數
 let targetLat = 0, targetLon = 0; 
-let isLocSelected = false; // 強制一開始是 false，一定要從選單中選取
+let isLocSelected = false; 
 let lat0 = 0, lon0 = 0, mLat = 110574, mLon = 111320; 
 
 let originH=0, surfY=0, prevX=0, prevZ=0;
@@ -226,7 +224,7 @@ function pickRow(rowId,key){
 }
 pickRow('handRow','hand'); pickRow('modeRow','fmode');
 
-/* ================= 自動完成地點搜尋機制 ================= */
+/* ================= 自動完成地點搜尋機制 (香港政府 ALS 服務) ================= */
 let searchTimeout = null;
 
 $('schoolInput').addEventListener('input', (e) => {
@@ -234,7 +232,6 @@ $('schoolInput').addEventListener('input', (e) => {
   const q = e.target.value.trim();
   const resBox = $('searchResults');
 
-  // 防抖機制：清除上次未執行的計時器
   if(searchTimeout) clearTimeout(searchTimeout);
 
   if(!q) {
@@ -242,48 +239,75 @@ $('schoolInput').addEventListener('input', (e) => {
     return;
   }
 
-  // 暫停打字 600 毫秒後，才會發送 API 請求，避免被系統封鎖
+  // 暫停打字 600 毫秒後，呼叫政府 ALS API
   searchTimeout = setTimeout(async () => {
     resBox.style.display = 'flex';
-    resBox.innerHTML = '<div style="padding:15px; color:#8fb2cd; font-size:13px; text-align:center;">⏳ 尋找地點中...</div>';
+    resBox.innerHTML = '<div style="padding:15px; color:#8fb2cd; font-size:13px; text-align:center;">⏳ 透過政府官方資料庫搜尋中...</div>';
 
     try {
-      // 呼叫 Nominatim (限制回傳 5 筆香港區域的地點)
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&countrycodes=hk&limit=5`);
+      // 呼叫香港政府地址搜尋服務 (Address Lookup Service)
+      const res = await fetch(`https://www.als.gov.hk/lookup?q=${encodeURIComponent(q)}&n=6`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      
       const data = await res.json();
+      const suggestions = data.SuggestedAddress || [];
 
-      if(data.length === 0) {
-        resBox.innerHTML = '<div style="padding:15px; color:#ff8a7a; font-size:13px; text-align:center;">⚠ 找不到相關地點，請嘗試輸入街道名稱或大地區</div>';
+      if(suggestions.length === 0) {
+        resBox.innerHTML = '<div style="padding:15px; color:#ff8a7a; font-size:13px; text-align:center;">⚠ 找不到相關地點，請嘗試輸入更詳細的屋邨或大廈名稱</div>';
         return;
       }
 
       resBox.innerHTML = '';
-      data.forEach(item => {
+      suggestions.forEach(item => {
+        const addr = item.Address;
+        if(!addr) return;
+        
+        // 取得座標 (WGS84 經緯度)
+        const geo = addr.GeospatialInformation && addr.GeospatialInformation[0];
+        if(!geo || !geo.Latitude || !geo.Longitude) return;
+
+        // 嘗試解析中文或英文地址資料
+        const chi = addr.PremisesAddress?.ChiPremisesAddress || {};
+        const eng = addr.PremisesAddress?.EngPremisesAddress || {};
+        
+        // 組合顯示名稱 (優先取大廈名稱，若無大廈則取街道名與門牌)
+        const bldgName = chi.BuildingName || eng.BuildingName || '';
+        const stName = (chi.ChiStreet?.StreetName) || (eng.EngStreet?.StreetName) || '';
+        const stNo = (chi.ChiStreet?.BuildingNoFrom) || (eng.EngStreet?.BuildingNoFrom) || '';
+        
+        let shortName = bldgName;
+        if (!shortName) shortName = `${stName} ${stNo}`.trim();
+        if (!shortName) shortName = '香港地點';
+
+        // 組合詳細地址作為副標題
+        const region = chi.Region?.ChiRegionName || eng.Region?.EngRegionName || '';
+        const district = chi.ChiDistrict?.ChiDcDistrictName || eng.EngDistrict?.EngDcDistrictName || '';
+        let detailName = `${region} ${district} ${stName} ${stNo} ${bldgName}`.trim().replace(/\s+/g, ' ');
+
         const div = document.createElement('div');
         div.className = 'loc-item';
+        div.innerHTML = `<strong>${shortName}</strong><small>${detailName}</small>`;
         
-        // 分離主要名稱與詳細地址
-        const shortName = item.name || item.display_name.split(',')[0];
-        
-        div.innerHTML = `<strong>${shortName}</strong><small>${item.display_name}</small>`;
-        
-        // 點擊選單後，記錄經緯度並關閉選單
         div.onclick = () => {
           $('schoolInput').value = shortName;
-          targetLat = parseFloat(item.lat);
-          targetLon = parseFloat(item.lon);
+          targetLat = parseFloat(geo.Latitude);
+          targetLon = parseFloat(geo.Longitude);
           isLocSelected = true;
           resBox.style.display = 'none';
         };
         resBox.appendChild(div);
       });
+      
+      if(resBox.innerHTML === '') {
+         resBox.innerHTML = '<div style="padding:15px; color:#ff8a7a; font-size:13px; text-align:center;">⚠ 該地點缺乏有效的經緯度資料</div>';
+      }
     } catch (err) {
-      resBox.innerHTML = '<div style="padding:15px; color:#ff8a7a; font-size:13px; text-align:center;">⚠ 網路搜尋失敗，請重試</div>';
+      resBox.innerHTML = '<div style="padding:15px; color:#ff8a7a; font-size:13px; text-align:center;">⚠ 網路搜尋失敗，請確認網路連線</div>';
     }
-  }, 600); // 延遲 600 毫秒
+  }, 600); 
 });
 
-// 若點擊畫面其他地方，隱藏選單
 document.addEventListener('click', (e) => {
   if (e.target !== $('schoolInput') && !$('searchResults').contains(e.target)) {
     $('searchResults').style.display = 'none';
