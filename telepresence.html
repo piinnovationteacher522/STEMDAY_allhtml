@@ -224,6 +224,7 @@ let localStream = null;
 let role = ''; 
 let joystickManager = null;
 
+// 表情符號對照表
 const EMOJI_MAP = {
     'like': '👍',
     'heart': '❤️',
@@ -251,15 +252,17 @@ async function getMedia(isReceiver) {
     }
 }
 
-// 處理接收到的資料 (加入 JSON 解析防護)
-function handleDataReceived(rawData) {
-    try {
-        // 確保任何瀏覽器傳來的資料都能被安全解析成物件
-        const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+// 處理接收到的資料 (最原始的字串分割，保證不報錯)
+function handleDataReceived(data) {
+    // 防呆：確保收到的東西一定是字串才處理
+    if (typeof data !== 'string') return;
 
-        if (data.type === 'joystick' && role === 'receiver') {
-            const x = data.x;
-            const y = data.y;
+    if (data.startsWith('J:') && role === 'receiver') {
+        // 擷取 J: 之後的數字，例如 "J:50.0,20.0" -> ["50.0", "20.0"]
+        const parts = data.substring(2).split(',');
+        if (parts.length === 2) {
+            const x = parseFloat(parts[0]);
+            const y = parseFloat(parts[1]);
             
             let leftSpeed = (y + x) * 0.5;
             let rightSpeed = (y - x) * 0.5;
@@ -279,15 +282,14 @@ function handleDataReceived(rawData) {
             document.getElementById('val-r').textContent = rightSpeed;
             
             uBitManager.send(`${leftSpeed},${rightSpeed}`);
-
-        } else if (data.type === 'emoji') {
-            const emojiChar = EMOJI_MAP[data.id];
-            if (emojiChar) {
-                showFloatingEmoji(emojiChar);
-            }
         }
-    } catch (err) {
-        console.error("資料解析錯誤:", err, rawData);
+    } else if (data.startsWith('E:')) {
+        // 擷取 E: 之後的純英文代碼，例如 "E:poop"
+        const emojiId = data.substring(2);
+        const emojiChar = EMOJI_MAP[emojiId];
+        if (emojiChar) {
+            showFloatingEmoji(emojiChar);
+        }
     }
 }
 
@@ -299,11 +301,10 @@ function showFloatingEmoji(emoji) {
     setTimeout(() => el.remove(), 2000);
 }
 
-// 發送 Emoji：手動轉成文字字串，避免 iOS 序列化崩潰
+// 發送 Emoji：傳送簡單字串如 "E:poop"
 function sendEmoji(emojiId) {
     if (dataConn && dataConn.open) {
-        const payload = JSON.stringify({ type: 'emoji', id: emojiId });
-        dataConn.send(payload);
+        dataConn.send(`E:${emojiId}`);
     }
 }
 
@@ -385,17 +386,15 @@ function setupJoystick() {
         let x = data.vector.x * 100;
         let y = data.vector.y * 100;
         
-        // 手動轉成純文字字串，保證跨裝置傳輸穩定
+        // 傳送簡單字串如 "J:50.0,20.0"
         if (dataConn && dataConn.open) {
-            const payload = JSON.stringify({ type: 'joystick', x: x, y: y });
-            dataConn.send(payload);
+            dataConn.send(`J:${x.toFixed(1)},${y.toFixed(1)}`);
         }
     });
 
     joystickManager.on('end', () => {
         if (dataConn && dataConn.open) {
-            const payload = JSON.stringify({ type: 'joystick', x: 0, y: 0 });
-            dataConn.send(payload);
+            dataConn.send(`J:0,0`);
         }
     });
 }
