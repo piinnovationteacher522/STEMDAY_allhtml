@@ -20,23 +20,18 @@
 
         body, html { 
             margin: 0; padding: 0; 
-            /* 使用 dvh 解決手機瀏覽器網址列遮擋問題，vh 為舊版相容 */
             height: 100vh; height: 100dvh; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background: var(--light); color: #333; overflow: hidden; 
             user-select: none; -webkit-user-select: none;
         }
         
-        /* -------------------------------------------
-           全螢幕介面樣式 
-           ------------------------------------------- */
         .fullscreen-panel { 
             position: fixed; top: 0; left: 0; width: 100vw; 
             height: 100vh; height: 100dvh;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             background: var(--light); box-sizing: border-box; padding: 40px 20px; z-index: 30;
             text-align: center;
-            /* 當螢幕過小(如橫向)時允許上下滑動，避免被截斷 */
             overflow-y: auto; overflow-x: hidden;
         }
         
@@ -70,9 +65,6 @@
         .fullscreen-panel .status-text { font-size: 18px; margin-top: 10px; font-weight: 500; text-align: center; }
         .divider { width: 100%; max-width: 400px; border-top: 2px solid var(--border); margin: 30px auto; }
 
-        /* -------------------------------------------
-           遙控介面與視訊元件 
-           ------------------------------------------- */
         .video-container { position: relative; width: 100vw; height: 100vh; height: 100dvh; display: none; background: #000; z-index: 10; overflow: hidden; }
         .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; transform: none; }
         .local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 133px; object-fit: cover; border: 2px solid #fff; border-radius: 6px; z-index: 12; background: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: scaleX(-1); }
@@ -106,10 +98,6 @@
         .status-success { color: var(--success); }
         .status-error { color: var(--danger); }
 
-        /* -------------------------------------------
-           手機與小螢幕響應式設定 (RWD) 
-           當螢幕寬度小於 600px 時自動縮小元件尺寸
-           ------------------------------------------- */
         @media (max-width: 600px) {
             .fullscreen-panel { padding: 20px 15px; }
             .fullscreen-panel h2 { font-size: 32px; margin-bottom: 15px; }
@@ -120,7 +108,6 @@
             .fullscreen-panel .code-box { font-size: 28px; padding: 15px; margin: 15px auto; }
             .divider { margin: 20px auto; }
             
-            /* 將疊加的介面縮小，避免在小螢幕上互相擋住 */
             .overlay-ui { top: 10px; left: 10px; }
             .info-card { width: 200px; padding: 10px 15px; font-size: 13px; }
             
@@ -278,12 +265,17 @@ function showScreen(id) {
     });
 }
 
-// 取得媒體串流
+// 取得媒體串流 
 async function getMedia(isReceiver) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, 
-            audio: !isReceiver // 接收端無聲，控制端有聲
+            video: { 
+                facingMode: "user", 
+                width: { ideal: 640, max: 640 }, 
+                height: { ideal: 480, max: 480 },
+                frameRate: { ideal: 15, max: 20 }
+            }, 
+            audio: !isReceiver 
         });
         document.getElementById('local-video').srcObject = localStream;
     } catch (err) {
@@ -296,7 +288,6 @@ function handleDataReceived(data) {
     if (typeof data !== 'string') return;
 
     if (data.startsWith('J:') && role === 'receiver') {
-        // --- 馬達控制與運算部分 (完全未改動) ---
         const [x, y] = data.substring(2).split(',').map(Number);
         
         let leftSpeed = (y + x) * 0.5;
@@ -317,7 +308,6 @@ function handleDataReceived(data) {
         document.getElementById('val-r').textContent = rightSpeed;
         
         uBitManager.send(`${leftSpeed},${rightSpeed}`);
-        // ------------------------------------------
 
     } else if (data.startsWith('E:')) {
         let emojiStr = data.substring(2);
@@ -343,7 +333,7 @@ function showFloatingEmoji(emoji) {
 
 // 發送 Emoji 給對方
 function sendEmoji(emoji) {
-    showFloatingEmoji(emoji); // 自己畫面上也顯示
+    // 已經移除 showFloatingEmoji(emoji);，自己畫面上將不會再出現動畫
     if (dataConn) {
         try {
             dataConn.send(`E:${encodeURIComponent(emoji)}`);
