@@ -39,8 +39,8 @@
         
         /* 全螢幕影片容器 */
         .video-container { position: relative; width: 100vw; height: 100vh; display: none; background: #000; z-index: 10; }
-        .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; }
-        .local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 133px; object-fit: cover; border: 2px solid #fff; border-radius: 6px; z-index: 12; background: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; transform: scaleX(-1); /* 自拍鏡頭水平翻轉更自然 */ }
+        .local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 133px; object-fit: cover; border: 2px solid #fff; border-radius: 6px; z-index: 12; background: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: scaleX(-1); }
         
         /* 浮動 UI 控制層 */
         .overlay-ui { position: absolute; top: 20px; left: 20px; z-index: 20; pointer-events: none; display: flex; flex-direction: column; gap: 10px; }
@@ -50,8 +50,8 @@
         .data-row { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
         .data-val { font-family: monospace; font-size: 15px; font-weight: bold; background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; }
 
-        /* 搖桿區域 */
-        #joystick-zone { position: absolute; bottom: 50px; left: 50px; width: 160px; height: 160px; z-index: 20; background: rgba(255,255,255,0.15); border-radius: 50%; border: 1px dashed rgba(255,255,255,0.5); }
+        /* 搖桿區域 - 已稍微放大並向上向右移動 */
+        #joystick-zone { position: absolute; bottom: 80px; left: 80px; width: 180px; height: 180px; z-index: 20; background: rgba(255,255,255,0.15); border-radius: 50%; border: 1px dashed rgba(255,255,255,0.5); pointer-events: auto; }
         
         /* 按鈕樣式 */
         button { 
@@ -59,10 +59,11 @@
             background: var(--primary); color: white; 
             border: none; border-radius: 6px; font-size: 16px; font-weight: 500;
             box-shadow: 0 2px 6px rgba(0,123,255,0.3); transition: background 0.2s, transform 0.1s;
-            width: 100%; max-width: 300px; box-sizing: border-box;
+            width: 100%; max-width: 300px; box-sizing: border-box; pointer-events: auto;
         }
         button:active { transform: scale(0.98); }
         button.btn-success { background: var(--success); box-shadow: 0 2px 6px rgba(40,167,69,0.3); }
+        button.btn-secondary { background: #6c757d; box-shadow: 0 2px 6px rgba(108,117,125,0.3); }
         button.btn-sm { padding: 8px 16px; font-size: 14px; margin: 5px 0; width: auto; }
         button:disabled { background: #6c757d; box-shadow: none; cursor: not-allowed; }
         
@@ -115,16 +116,19 @@
     <div class="overlay-ui">
         <div class="info-card" id="conn-status">連線狀態: 初始化中...</div>
         
-        <div class="info-card" id="receiver-dashboard" style="display: none;">
-            <div style="font-weight:bold; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:8px;">接收端硬體監控</div>
+        <div id="receiver-tools" style="display: none;">
+            <button id="toggle-dashboard" class="btn-secondary btn-sm" style="margin-left: 0;">切換硬體監控面板</button>
             
-            <button id="btn-connect-bt-active" class="btn-success btn-sm">連接 micro:bit 藍牙</button>
-            <div id="uBit-status-active" class="status-text status-default" style="margin-bottom: 10px;">狀態: 未連接</div>
-            
-            <div class="data-row"><span>搖桿輸入 X:</span><span class="data-val" id="val-x">0.0</span></div>
-            <div class="data-row"><span>搖桿輸入 Y:</span><span class="data-val" id="val-y">0.0</span></div>
-            <div class="data-row" style="color:var(--success);"><span>左輪輸出 L:</span><span class="data-val" id="val-l">0</span></div>
-            <div class="data-row" style="color:var(--success);"><span>右輪輸出 R:</span><span class="data-val" id="val-r">0</span></div>
+            <div class="info-card" id="receiver-dashboard" style="display: none; margin-top: 10px;">
+                <div style="font-weight:bold; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:8px;">接收端硬體監控</div>
+                <button id="btn-connect-bt-active" class="btn-success btn-sm" style="margin-left: 0; width: 100%;">重新連接 micro:bit</button>
+                <div id="uBit-status-active" class="status-text status-default" style="margin-bottom: 10px;">狀態: 未連接</div>
+                
+                <div class="data-row"><span>搖桿輸入 X:</span><span class="data-val" id="val-x">0.0</span></div>
+                <div class="data-row"><span>搖桿輸入 Y:</span><span class="data-val" id="val-y">0.0</span></div>
+                <div class="data-row" style="color:var(--success);"><span>左輪輸出 L:</span><span class="data-val" id="val-l">0</span></div>
+                <div class="data-row" style="color:var(--success);"><span>右輪輸出 R:</span><span class="data-val" id="val-r">0</span></div>
+            </div>
         </div>
     </div>
 
@@ -132,8 +136,14 @@
 </div>
 
 <script>
+// 監聽硬體面板的顯示/隱藏切換
+document.getElementById("toggle-dashboard").addEventListener("click", () => {
+    const dash = document.getElementById("receiver-dashboard");
+    dash.style.display = dash.style.display === "none" ? "block" : "none";
+});
+
 /**
- * 1. 簡化連線 ID 生成器 (格式: animalXXX)
+ * 1. 簡化連線 ID 生成器
  */
 function generateSimpleId() {
     const animals = ['dog', 'cat', 'panda', 'bear', 'rabbit', 'lion', 'tiger', 'monkey', 'koala', 'fox', 'hippo', 'zebra', 'penguin', 'elephant', 'frog'];
@@ -154,11 +164,9 @@ const uBitManager = {
     device: null,
     rxCharacteristic: null,
     
-    // 同步更新設定頁面與通話中畫面的狀態
     updateStatus(msg, type = 'default') {
         const elSetup = document.getElementById("uBit-status-setup");
         const elActive = document.getElementById("uBit-status-active");
-        
         if (elSetup) { elSetup.textContent = msg; elSetup.className = `status-text status-${type}`; }
         if (elActive) { elActive.textContent = msg; elActive.className = `status-text status-${type}`; }
     },
@@ -190,13 +198,11 @@ const uBitManager = {
         if (!this.rxCharacteristic) return;
         try {
             const encoder = new TextEncoder();
-            // micro:bit 結尾需要換行符
             await this.rxCharacteristic.writeValue(encoder.encode(message + "\n"));
         } catch (err) { console.error("藍牙發送失敗:", err); }
     }
 };
 
-// 綁定設定頁與通話中畫面的藍牙按鈕
 document.getElementById("btn-connect-bt-setup").addEventListener("click", () => uBitManager.connect());
 document.getElementById("btn-connect-bt-active").addEventListener("click", () => uBitManager.connect());
 
@@ -215,15 +221,18 @@ function showScreen(id) {
     });
 }
 
-async function getMedia() {
+// 根據角色決定是否請求麥克風權限
+async function getMedia(isReceiver) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, 
-            audio: true 
+            // 雙方皆使用前置鏡頭 (user)
+            video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, 
+            // 接收端不傳送聲音，控制端傳送聲音
+            audio: !isReceiver 
         });
         document.getElementById('local-video').srcObject = localStream;
     } catch (err) {
-        alert("無法獲取視訊鏡頭或麥克風權限: " + err.message);
+        alert("無法獲取視訊鏡頭權限: " + err.message);
     }
 }
 
@@ -231,7 +240,7 @@ async function getMedia() {
 async function initReceiver() {
     role = 'receiver';
     showScreen('receiver-setup');
-    await getMedia();
+    await getMedia(true); // 傳入 true 代表是接收端，關閉麥克風收音
 
     const simpleId = generateSimpleId();
     document.getElementById('my-peer-id').textContent = simpleId;
@@ -243,7 +252,9 @@ async function initReceiver() {
         call.on('stream', (remoteStream) => {
             document.getElementById('remote-video').srcObject = remoteStream;
             showScreen('telepresence-ui');
-            document.getElementById('receiver-dashboard').style.display = 'block'; 
+            
+            // 顯示接收端專用控制區（預設只顯示切換按鈕，隱藏監控面板）
+            document.getElementById('receiver-tools').style.display = 'block'; 
             document.getElementById('conn-status').textContent = "連線狀態: 已連接控制端";
         });
     });
@@ -251,16 +262,11 @@ async function initReceiver() {
     peer.on('connection', (conn) => {
         dataConn = conn;
         conn.on('data', (data) => {
-            // 接收格式: x,y (原始範圍各為 -100 到 100)
             const [x, y] = data.split(',').map(Number);
             
-            /* * 更改後的馬達輸出算法：最高速度範圍 -50 至 50
-             * 基礎公式：將 y 軸與 x 軸進行混控，並將原本 max 100 的物理量映射至 max 50
-             */
             let leftSpeed = (y + x) * 0.5;
             let rightSpeed = (y - x) * 0.5;
             
-            // 動態等比例縮放，確保最大絕對值不會超過 50 (滿足要求 1)
             let maxMagnitude = Math.max(Math.abs(leftSpeed), Math.abs(rightSpeed));
             if (maxMagnitude > 50) {
                 leftSpeed = (leftSpeed / maxMagnitude) * 50;
@@ -269,21 +275,12 @@ async function initReceiver() {
             
             leftSpeed = Math.round(leftSpeed);
             rightSpeed = Math.round(rightSpeed);
-            
-            /* * 邏輯行為校驗 (滿足要求 2-5):
-             * 2. 向前 (y > 0, x = 0): L 與 R 會得出相同的正數。
-             * 3. 向後 (y < 0, x = 0): L 與 R 會得出相同的負數。
-             * 4. 向左 (x < 0): L 的值會因加上負值而小於 R (若原地旋轉 L 為負，R 為正)。
-             * 5. 向右 (x > 0): R 的值會因減去正值而小於 L (若原地旋轉 L 為正，R 為負)。
-             */
 
-            // 更新接收端介面上的儀表板數值
             document.getElementById('val-x').textContent = x.toFixed(1);
             document.getElementById('val-y').textContent = y.toFixed(1);
             document.getElementById('val-l').textContent = leftSpeed;
             document.getElementById('val-r').textContent = rightSpeed;
             
-            // 經由藍牙傳送數據至 micro:bit (字串格式: 左輪速度,右輪速度)
             uBitManager.send(`${leftSpeed},${rightSpeed}`);
         });
     });
@@ -293,7 +290,7 @@ async function initReceiver() {
 async function initController() {
     role = 'controller';
     showScreen('controller-setup');
-    await getMedia();
+    await getMedia(false); // 傳入 false，控制端保留麥克風收音
 }
 
 function connectToReceiver() {
@@ -302,7 +299,6 @@ function connectToReceiver() {
 
     peer = new Peer();
     peer.on('open', () => {
-        // 1. 呼叫視訊通道
         const call = peer.call(targetId, localStream);
         call.on('stream', (remoteStream) => {
             document.getElementById('remote-video').srcObject = remoteStream;
@@ -311,7 +307,6 @@ function connectToReceiver() {
             setupJoystick(); 
         });
 
-        // 2. 呼叫數據通道
         dataConn = peer.connect(targetId);
     });
     
@@ -330,11 +325,10 @@ function setupJoystick() {
         mode: 'static',
         position: { left: '50%', top: '50%' },
         color: '#007bff',
-        size: 130
+        size: 150 // 上調搖桿判定範圍大小
     });
 
     joystickManager.on('move', (evt, data) => {
-        // 轉換向量物理量為 -100 到 100 傳送給接收端
         let x = data.vector.x * 100;
         let y = data.vector.y * 100;
         
@@ -345,7 +339,6 @@ function setupJoystick() {
     });
 
     joystickManager.on('end', () => {
-        // 釋放搖桿時，發送 0,0 確保車子完全靜止
         if (dataConn && dataConn.open) {
             dataConn.send("0,0");
         }
