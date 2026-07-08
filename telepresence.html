@@ -159,7 +159,6 @@ document.getElementById("toggle-dashboard").addEventListener("click", () => {
     dash.style.display = dash.style.display === "none" ? "block" : "none";
 });
 
-/** 簡化連線 ID 生成器 */
 function generateSimpleId() {
     const animals = ['dog', 'cat', 'panda', 'bear', 'rabbit', 'lion', 'tiger', 'monkey', 'koala', 'fox', 'hippo', 'zebra', 'penguin', 'elephant', 'frog'];
     const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
@@ -225,7 +224,6 @@ let localStream = null;
 let role = ''; 
 let joystickManager = null;
 
-// 定義 Emoji 代碼對照表，解決編碼截斷問題
 const EMOJI_MAP = {
     'like': '👍',
     'heart': '❤️',
@@ -253,37 +251,43 @@ async function getMedia(isReceiver) {
     }
 }
 
-// 處理接收到的資料 (現已改為接收 JSON Object)
-function handleDataReceived(data) {
-    if (data.type === 'joystick' && role === 'receiver') {
-        const x = data.x;
-        const y = data.y;
-        
-        let leftSpeed = (y + x) * 0.5;
-        let rightSpeed = (y - x) * 0.5;
-        
-        let maxMagnitude = Math.max(Math.abs(leftSpeed), Math.abs(rightSpeed));
-        if (maxMagnitude > 50) {
-            leftSpeed = (leftSpeed / maxMagnitude) * 50;
-            rightSpeed = (rightSpeed / maxMagnitude) * 50;
-        }
-        
-        leftSpeed = Math.round(leftSpeed);
-        rightSpeed = Math.round(rightSpeed);
+// 處理接收到的資料 (加入 JSON 解析防護)
+function handleDataReceived(rawData) {
+    try {
+        // 確保任何瀏覽器傳來的資料都能被安全解析成物件
+        const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
 
-        document.getElementById('val-x').textContent = x.toFixed(1);
-        document.getElementById('val-y').textContent = y.toFixed(1);
-        document.getElementById('val-l').textContent = leftSpeed;
-        document.getElementById('val-r').textContent = rightSpeed;
-        
-        uBitManager.send(`${leftSpeed},${rightSpeed}`);
+        if (data.type === 'joystick' && role === 'receiver') {
+            const x = data.x;
+            const y = data.y;
+            
+            let leftSpeed = (y + x) * 0.5;
+            let rightSpeed = (y - x) * 0.5;
+            
+            let maxMagnitude = Math.max(Math.abs(leftSpeed), Math.abs(rightSpeed));
+            if (maxMagnitude > 50) {
+                leftSpeed = (leftSpeed / maxMagnitude) * 50;
+                rightSpeed = (rightSpeed / maxMagnitude) * 50;
+            }
+            
+            leftSpeed = Math.round(leftSpeed);
+            rightSpeed = Math.round(rightSpeed);
 
-    } else if (data.type === 'emoji') {
-        // 從對照表中把安全的英文 ID 轉換回表情符號
-        const emojiChar = EMOJI_MAP[data.id];
-        if (emojiChar) {
-            showFloatingEmoji(emojiChar);
+            document.getElementById('val-x').textContent = x.toFixed(1);
+            document.getElementById('val-y').textContent = y.toFixed(1);
+            document.getElementById('val-l').textContent = leftSpeed;
+            document.getElementById('val-r').textContent = rightSpeed;
+            
+            uBitManager.send(`${leftSpeed},${rightSpeed}`);
+
+        } else if (data.type === 'emoji') {
+            const emojiChar = EMOJI_MAP[data.id];
+            if (emojiChar) {
+                showFloatingEmoji(emojiChar);
+            }
         }
+    } catch (err) {
+        console.error("資料解析錯誤:", err, rawData);
     }
 }
 
@@ -295,10 +299,11 @@ function showFloatingEmoji(emoji) {
     setTimeout(() => el.remove(), 2000);
 }
 
-// 傳送 Emoji：只傳送代碼，例如 { type: 'emoji', id: 'poop' }
+// 發送 Emoji：手動轉成文字字串，避免 iOS 序列化崩潰
 function sendEmoji(emojiId) {
     if (dataConn && dataConn.open) {
-        dataConn.send({ type: 'emoji', id: emojiId });
+        const payload = JSON.stringify({ type: 'emoji', id: emojiId });
+        dataConn.send(payload);
     }
 }
 
@@ -380,15 +385,17 @@ function setupJoystick() {
         let x = data.vector.x * 100;
         let y = data.vector.y * 100;
         
-        // 改為傳送安全的 JSON Object
+        // 手動轉成純文字字串，保證跨裝置傳輸穩定
         if (dataConn && dataConn.open) {
-            dataConn.send({ type: 'joystick', x: x, y: y });
+            const payload = JSON.stringify({ type: 'joystick', x: x, y: y });
+            dataConn.send(payload);
         }
     });
 
     joystickManager.on('end', () => {
         if (dataConn && dataConn.open) {
-            dataConn.send({ type: 'joystick', x: 0, y: 0 });
+            const payload = JSON.stringify({ type: 'joystick', x: 0, y: 0 });
+            dataConn.send(payload);
         }
     });
 }
