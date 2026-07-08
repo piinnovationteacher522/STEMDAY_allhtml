@@ -9,7 +9,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
 
     <style>
-        /* 簡潔現代風格 */
         :root {
             --primary: #007bff;
             --success: #28a745;
@@ -37,9 +36,13 @@
         h3 { font-size: 24px; margin-bottom: 20px; color: var(--dark); }
         p { color: #666; font-size: 16px; margin-bottom: 20px; text-align: center; max-width: 400px; }
         
-        /* 全螢幕影片容器 */
-        .video-container { position: relative; width: 100vw; height: 100vh; display: none; background: #000; z-index: 10; }
-        .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; transform: scaleX(-1); /* 自拍鏡頭水平翻轉更自然 */ }
+        /* 影片容器 */
+        .video-container { position: relative; width: 100vw; height: 100vh; display: none; background: #000; z-index: 10; overflow: hidden; }
+        
+        /* 遠端畫面「不反轉」，對方看到的是真實方向 */
+        .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; transform: none; }
+        
+        /* 本地子畫面「反轉」，像照鏡子一樣自然 */
         .local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 133px; object-fit: cover; border: 2px solid #fff; border-radius: 6px; z-index: 12; background: #333; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: scaleX(-1); }
         
         /* 浮動 UI 控制層 */
@@ -50,9 +53,21 @@
         .data-row { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
         .data-val { font-family: monospace; font-size: 15px; font-weight: bold; background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; }
 
-        /* 搖桿區域 - 已稍微放大並向上向右移動 */
+        /* 搖桿區域 */
         #joystick-zone { position: absolute; bottom: 80px; left: 80px; width: 180px; height: 180px; z-index: 20; background: rgba(255,255,255,0.15); border-radius: 50%; border: 1px dashed rgba(255,255,255,0.5); pointer-events: auto; }
         
+        /* Emoji 工具列與飄浮動畫 */
+        .emoji-bar { position: absolute; top: 20px; right: 20px; z-index: 25; display: flex; flex-direction: column; gap: 12px; pointer-events: auto; }
+        .emoji-btn { width: 50px; height: 50px; font-size: 26px; background: rgba(255,255,255,0.8); border: none; border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 10px rgba(0,0,0,0.2); transition: transform 0.1s; padding: 0; margin: 0; }
+        .emoji-btn:active { transform: scale(0.85); }
+        
+        .floating-emoji { position: absolute; left: 50%; top: 50%; font-size: 100px; transform: translate(-50%, -50%); z-index: 100; pointer-events: none; text-shadow: 0 5px 15px rgba(0,0,0,0.4); animation: floatUp 2s ease-out forwards; }
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translate(-50%, -50%) scale(0.5); }
+            15% { transform: translate(-50%, -50%) scale(1.2); }
+            100% { opacity: 0; transform: translate(-50%, -200%) scale(1); }
+        }
+
         /* 按鈕樣式 */
         button { 
             padding: 14px 32px; margin: 10px; cursor: pointer; 
@@ -65,15 +80,12 @@
         button.btn-success { background: var(--success); box-shadow: 0 2px 6px rgba(40,167,69,0.3); }
         button.btn-secondary { background: #6c757d; box-shadow: 0 2px 6px rgba(108,117,125,0.3); }
         button.btn-sm { padding: 8px 16px; font-size: 14px; margin: 5px 0; width: auto; }
-        button:disabled { background: #6c757d; box-shadow: none; cursor: not-allowed; }
         
         /* 輸入框 */
         input[type="text"] { padding: 12px 20px; font-size: 18px; border-radius: 6px; border: 1px solid var(--border); text-align: center; width: 100%; max-width: 300px; outline: none; box-sizing: border-box; margin-bottom: 15px; }
         input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,123,255,0.25); }
         
-        /* 簡化 ID 顯示框 */
         .code-box { background: #e9ecef; border: 1px solid var(--border); padding: 15px; border-radius: 6px; font-size: 22px; font-weight: bold; color: var(--dark); margin: 15px 0; text-align: center; width: 100%; max-width: 300px; box-sizing: border-box; }
-
         .status-text { font-size: 14px; margin-top: 5px; font-weight: 500; }
         .status-default { color: #6c757d; }
         .status-success { color: var(--success); }
@@ -94,9 +106,7 @@
     <p>步驟 1：請先完成 micro:bit 硬件連線</p>
     <button id="btn-connect-bt-setup" class="btn-success">連接 micro:bit 藍牙</button>
     <div id="uBit-status-setup" class="status-text status-default">狀態：等待藍牙連接...</div>
-    
     <div style="width:100%; max-width:300px; border-top:1px solid var(--border); margin: 25px 0;"></div>
-    
     <p>步驟 2：請將下方的連線配對碼提供給控制端</p>
     <div class="code-box" id="my-peer-id">正在產生配對碼...</div>
     <p style="font-size:13px; color:#6c757d;">等待控制端視訊連線中...</p>
@@ -113,21 +123,28 @@
     <video id="remote-video" class="remote-video" autoplay playsinline></video>
     <video id="local-video" class="local-video" autoplay playsinline muted></video>
     
+    <div class="emoji-bar" id="emoji-bar" style="display: none;">
+        <button class="emoji-btn" onclick="sendEmoji('👍')">👍</button>
+        <button class="emoji-btn" onclick="sendEmoji('❤️')">❤️</button>
+        <button class="emoji-btn" onclick="sendEmoji('😂')">😂</button>
+        <button class="emoji-btn" onclick="sendEmoji('😮')">😮</button>
+        <button class="emoji-btn" onclick="sendEmoji('💩')">💩</button>
+        <button class="emoji-btn" onclick="sendEmoji('🚗')">🚗</button>
+    </div>
+
     <div class="overlay-ui">
         <div class="info-card" id="conn-status">連線狀態: 初始化中...</div>
         
         <div id="receiver-tools" style="display: none;">
-            <button id="toggle-dashboard" class="btn-secondary btn-sm" style="margin-left: 0;">切換硬體監控面板</button>
-            
+            <button id="toggle-dashboard" class="btn-secondary btn-sm" style="margin-left: 0;">切換硬體監控</button>
             <div class="info-card" id="receiver-dashboard" style="display: none; margin-top: 10px;">
-                <div style="font-weight:bold; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:8px;">接收端硬體監控</div>
+                <div style="font-weight:bold; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:8px;">硬體監控面板</div>
                 <button id="btn-connect-bt-active" class="btn-success btn-sm" style="margin-left: 0; width: 100%;">重新連接 micro:bit</button>
                 <div id="uBit-status-active" class="status-text status-default" style="margin-bottom: 10px;">狀態: 未連接</div>
-                
-                <div class="data-row"><span>搖桿輸入 X:</span><span class="data-val" id="val-x">0.0</span></div>
-                <div class="data-row"><span>搖桿輸入 Y:</span><span class="data-val" id="val-y">0.0</span></div>
-                <div class="data-row" style="color:var(--success);"><span>左輪輸出 L:</span><span class="data-val" id="val-l">0</span></div>
-                <div class="data-row" style="color:var(--success);"><span>右輪輸出 R:</span><span class="data-val" id="val-r">0</span></div>
+                <div class="data-row"><span>輸入 X:</span><span class="data-val" id="val-x">0.0</span></div>
+                <div class="data-row"><span>輸入 Y:</span><span class="data-val" id="val-y">0.0</span></div>
+                <div class="data-row" style="color:var(--success);"><span>左輪 L:</span><span class="data-val" id="val-l">0</span></div>
+                <div class="data-row" style="color:var(--success);"><span>右輪 R:</span><span class="data-val" id="val-r">0</span></div>
             </div>
         </div>
     </div>
@@ -136,25 +153,20 @@
 </div>
 
 <script>
-// 監聽硬體面板的顯示/隱藏切換
+// 面板切換
 document.getElementById("toggle-dashboard").addEventListener("click", () => {
     const dash = document.getElementById("receiver-dashboard");
     dash.style.display = dash.style.display === "none" ? "block" : "none";
 });
 
-/**
- * 1. 簡化連線 ID 生成器
- */
+/** 簡化連線 ID 生成器 */
 function generateSimpleId() {
     const animals = ['dog', 'cat', 'panda', 'bear', 'rabbit', 'lion', 'tiger', 'monkey', 'koala', 'fox', 'hippo', 'zebra', 'penguin', 'elephant', 'frog'];
     const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
-    const randomNumber = Math.floor(100 + Math.random() * 900); 
-    return `${randomAnimal}${randomNumber}`;
+    return `${randomAnimal}${Math.floor(100 + Math.random() * 900)}`;
 }
 
-/**
- * 2. micro:bit 藍牙管理模組
- */
+/** micro:bit 藍牙模組 */
 const uBitManager = {
     UUIDS: {
         UART_SERVICE: "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
@@ -206,9 +218,7 @@ const uBitManager = {
 document.getElementById("btn-connect-bt-setup").addEventListener("click", () => uBitManager.connect());
 document.getElementById("btn-connect-bt-active").addEventListener("click", () => uBitManager.connect());
 
-/**
- * 3. Telepresence 與 控制數據計算邏輯
- */
+/** Telepresence 與 雙向數據核心 */
 let peer = null;
 let dataConn = null;
 let localStream = null;
@@ -221,14 +231,12 @@ function showScreen(id) {
     });
 }
 
-// 根據角色決定是否請求麥克風權限
+// 取得媒體串流 (強制要求 user 前置自拍鏡頭)
 async function getMedia(isReceiver) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            // 雙方皆使用前置鏡頭 (user)
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, 
-            // 接收端不傳送聲音，控制端傳送聲音
-            audio: !isReceiver 
+            audio: !isReceiver // 接收端無聲，控制端有聲
         });
         document.getElementById('local-video').srcObject = localStream;
     } catch (err) {
@@ -236,11 +244,59 @@ async function getMedia(isReceiver) {
     }
 }
 
+// 處理接收到的雙向數據 (Joystick 或 Emoji)
+function handleDataReceived(data) {
+    if (data.startsWith('J:') && role === 'receiver') {
+        // 處理遙控器數據
+        const [x, y] = data.substring(2).split(',').map(Number);
+        
+        let leftSpeed = (y + x) * 0.5;
+        let rightSpeed = (y - x) * 0.5;
+        
+        let maxMagnitude = Math.max(Math.abs(leftSpeed), Math.abs(rightSpeed));
+        if (maxMagnitude > 50) {
+            leftSpeed = (leftSpeed / maxMagnitude) * 50;
+            rightSpeed = (rightSpeed / maxMagnitude) * 50;
+        }
+        
+        leftSpeed = Math.round(leftSpeed);
+        rightSpeed = Math.round(rightSpeed);
+
+        document.getElementById('val-x').textContent = x.toFixed(1);
+        document.getElementById('val-y').textContent = y.toFixed(1);
+        document.getElementById('val-l').textContent = leftSpeed;
+        document.getElementById('val-r').textContent = rightSpeed;
+        
+        uBitManager.send(`${leftSpeed},${rightSpeed}`);
+
+    } else if (data.startsWith('E:')) {
+        // 處理收到的 Emoji
+        showFloatingEmoji(data.substring(2));
+    }
+}
+
+// 畫面浮動 Emoji 呈現函數
+function showFloatingEmoji(emoji) {
+    const el = document.createElement('div');
+    el.className = 'floating-emoji';
+    el.textContent = emoji;
+    document.getElementById('telepresence-ui').appendChild(el);
+    setTimeout(() => el.remove(), 2000);
+}
+
+// 發送 Emoji 給對方
+function sendEmoji(emoji) {
+    showFloatingEmoji(emoji); // 自己畫面上也顯示
+    if (dataConn && dataConn.open) {
+        dataConn.send(`E:${emoji}`);
+    }
+}
+
 // === 接收端初始化 ===
 async function initReceiver() {
     role = 'receiver';
     showScreen('receiver-setup');
-    await getMedia(true); // 傳入 true 代表是接收端，關閉麥克風收音
+    await getMedia(true); 
 
     const simpleId = generateSimpleId();
     document.getElementById('my-peer-id').textContent = simpleId;
@@ -252,37 +308,16 @@ async function initReceiver() {
         call.on('stream', (remoteStream) => {
             document.getElementById('remote-video').srcObject = remoteStream;
             showScreen('telepresence-ui');
-            
-            // 顯示接收端專用控制區（預設只顯示切換按鈕，隱藏監控面板）
             document.getElementById('receiver-tools').style.display = 'block'; 
+            document.getElementById('emoji-bar').style.display = 'flex'; 
             document.getElementById('conn-status').textContent = "連線狀態: 已連接控制端";
         });
     });
 
     peer.on('connection', (conn) => {
         dataConn = conn;
-        conn.on('data', (data) => {
-            const [x, y] = data.split(',').map(Number);
-            
-            let leftSpeed = (y + x) * 0.5;
-            let rightSpeed = (y - x) * 0.5;
-            
-            let maxMagnitude = Math.max(Math.abs(leftSpeed), Math.abs(rightSpeed));
-            if (maxMagnitude > 50) {
-                leftSpeed = (leftSpeed / maxMagnitude) * 50;
-                rightSpeed = (rightSpeed / maxMagnitude) * 50;
-            }
-            
-            leftSpeed = Math.round(leftSpeed);
-            rightSpeed = Math.round(rightSpeed);
-
-            document.getElementById('val-x').textContent = x.toFixed(1);
-            document.getElementById('val-y').textContent = y.toFixed(1);
-            document.getElementById('val-l').textContent = leftSpeed;
-            document.getElementById('val-r').textContent = rightSpeed;
-            
-            uBitManager.send(`${leftSpeed},${rightSpeed}`);
-        });
+        // 綁定數據接收事件
+        conn.on('data', handleDataReceived);
     });
 }
 
@@ -290,7 +325,7 @@ async function initReceiver() {
 async function initController() {
     role = 'controller';
     showScreen('controller-setup');
-    await getMedia(false); // 傳入 false，控制端保留麥克風收音
+    await getMedia(false); 
 }
 
 function connectToReceiver() {
@@ -303,11 +338,16 @@ function connectToReceiver() {
         call.on('stream', (remoteStream) => {
             document.getElementById('remote-video').srcObject = remoteStream;
             showScreen('telepresence-ui');
+            document.getElementById('emoji-bar').style.display = 'flex';
             document.getElementById('conn-status').textContent = "連線狀態: 已成功連接遠端";
             setupJoystick(); 
         });
 
         dataConn = peer.connect(targetId);
+        dataConn.on('open', () => {
+            // 控制端也必須綁定數據接收事件才能看到對方傳來的 Emoji
+            dataConn.on('data', handleDataReceived);
+        });
     });
     
     peer.on('error', (err) => {
@@ -325,22 +365,22 @@ function setupJoystick() {
         mode: 'static',
         position: { left: '50%', top: '50%' },
         color: '#007bff',
-        size: 150 // 上調搖桿判定範圍大小
+        size: 150 
     });
 
     joystickManager.on('move', (evt, data) => {
         let x = data.vector.x * 100;
         let y = data.vector.y * 100;
         
-        const msg = `${x.toFixed(1)},${y.toFixed(1)}`;
+        // 搖桿數據加入 J: 前綴
         if (dataConn && dataConn.open) {
-            dataConn.send(msg);
+            dataConn.send(`J:${x.toFixed(1)},${y.toFixed(1)}`);
         }
     });
 
     joystickManager.on('end', () => {
         if (dataConn && dataConn.open) {
-            dataConn.send("0,0");
+            dataConn.send("J:0,0");
         }
     });
 }
