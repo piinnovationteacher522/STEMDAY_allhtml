@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>🤖 兒童友善 Telepresence 智能小車控制台 🚗</title>
+    
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
+
+    <style>
+        /* 小學生風格：圓潤、明亮、活潑 */
+        :root {
+            --primary-color: #FF6B6B;
+            --secondary-color: #4D96FF;
+            --success-color: #6BCB77;
+            --warning-color: #FFD93D;
+            --bg-pastel: #F6F9FC;
+        }
+
+        body, html { 
+            margin: 0; padding: 0; height: 100%; 
+            font-family: 'Comic Sans MS', 'Chalkboard SE', "Microsoft JhengHei", sans-serif; 
+            background: var(--bg-pastel); color: #333; overflow: hidden; 
+            user-select: none; -webkit-user-select: none;
+        }
+        
+        /* 歡迎與設定介面 */
+        .panel { 
+            padding: 30px 20px; max-width: 450px; margin: 40px auto; 
+            text-align: center; background: white; border-radius: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08); border: 4px solid #E2E8F0;
+        }
+        h2 { color: var(--primary-color); font-size: 28px; margin-bottom: 5px; }
+        h3 { color: var(--secondary-color); font-size: 22px; }
+        p { color: #666; font-size: 16px; }
+        
+        /* 全螢幕影片容器 */
+        .video-container { position: relative; width: 100vw; height: 100vh; display: none; background: #000; }
+        .remote-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1; }
+        /* 子母畫面（自己的鏡頭）縮小並放在角落 */
+        .local-video { position: absolute; bottom: 20px; right: 20px; width: 90px; height: 120px; object-fit: cover; border: 3px solid #fff; border-radius: 12px; z-index: 10; background: #333; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        
+        /* 浮動 UI 控制層 */
+        .overlay-ui { position: absolute; top: 15px; left: 15px; z-index: 20; pointer-events: none; }
+        .info-card { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(5px); color: #222; padding: 12px 18px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); border: 2px solid var(--secondary-color); font-weight: bold; font-size: 14px; margin-bottom: 8px; pointer-events: auto; }
+        
+        /* 接收端專用：數據儀表板小欄 */
+        .data-dashboard { border-color: var(--primary-color); min-width: 200px; }
+        .data-row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 15px; }
+        .data-val { color: #1A5276; font-family: monospace; font-size: 16px; background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 4px; }
+
+        /* 搖桿區域 (僅控制端顯示) - 放大且透明方便操作 */
+        #joystick-zone { position: absolute; bottom: 40px; left: 40px; width: 160px; height: 160px; z-index: 20; background: rgba(255,255,255,0.1); border-radius: 50%; border: 2px dashed rgba(255,255,255,0.4); }
+        
+        /* 可愛風格按鈕 */
+        button { 
+            padding: 14px 28px; margin: 12px; cursor: pointer; 
+            background: linear-gradient(135deg, #4D96FF, #0066FF); color: white; 
+            border: none; border-radius: 50px; font-size: 18px; font-weight: bold;
+            box-shadow: 0 6px 15px rgba(77, 150, 255, 0.4); transition: transform 0.1s, box-shadow 0.1s;
+        }
+        button:active { transform: scale(0.96); box-shadow: 0 3px 8px rgba(77, 150, 255, 0.4); }
+        button.btn-orange { background: linear-gradient(135deg, #FF6B6B, #FF4747); box-shadow: 0 6px 15px rgba(255, 107, 107, 0.4); }
+        button.btn-green { background: linear-gradient(135deg, #6BCB77, #4CAE5A); box-shadow: 0 6px 15px rgba(107, 203, 119, 0.4); }
+        button:disabled { background: #CBD5E1; box-shadow: none; cursor: not-allowed; color: #94A3B8; }
+        
+        /* 大字體輸入框 */
+        input[type="text"] { padding: 12px 20px; font-size: 20px; border-radius: 50px; border: 3px solid #CBD5E1; text-align: center; width: 80%; outline: none; transition: border-color 0.2s; font-weight: bold; color: #333; }
+        input[type="text"]:focus { border-color: var(--secondary-color); }
+        
+        /* 大又可愛的密碼顯示框 */
+        .animal-code-box { background: #FEF9E7; border: 3px dashed #F4D03F; padding: 15px; border-radius: 16px; font-size: 24px; font-weight: bold; color: #B7950B; margin: 15px 0; letter-spacing: 1px; }
+
+        .status-text { font-size: 15px; margin: 8px 0; font-weight: bold; }
+        .status-default { color: #7F8C8D; }
+        .status-success { color: #27AE60; }
+        .status-error { color: #C0392B; }
+    </style>
+</head>
+<body>
+
+<div id="home-panel" class="panel">
+    <h2>🤖 智能小車控制台 🚗</h2>
+    <p>選一個你想玩的模式吧！</p>
+    <button class="btn-orange" onclick="initReceiver()">🎥 我是接收端<br><span style="font-size:12px;font-weight:normal;">(放在車車上)</span></button>
+    <button onclick="initController()">🕹️ 我是控制端<br><span style="font-size:12px;font-weight:normal;">(拿在手上遙控)</span></button>
+</div>
+
+<div id="receiver-setup" class="panel" style="display: none;">
+    <h3>🎥 接收端準備中</h3>
+    <p>1. 請先打開小車的藍牙，然後點下面連線：</p>
+    <button id="btn-connect-bt" class="btn-green">🔗 連接 micro:bit 藍牙</button>
+    <div id="uBit-status" class="status-text status-default">狀態：等待藍牙連接... 🔴</div>
+    
+    <hr style="border: 0; border-top: 2px dashed #E2E8F0; margin: 25px 0;">
+    <p>2. 連接成功後，請把下面的<b>「動物密碼」</b>告訴控制端的小朋友：</p>
+    <div class="animal-code-box" id="my-peer-id">正在產生動物密碼... 🐾</div>
+    <p style="font-size:13px; color:#999;">等待控制端連線中...</p>
+</div>
+
+<div id="controller-setup" class="panel" style="display: none;">
+    <h3>🕹️ 控制端準備中</h3>
+    <p>請輸入車車螢幕上顯示的<b>「動物密碼」</b>：</p>
+    <input type="text" id="target-id" placeholder="例如: panda520" autocomplete="off" autocapitalize="none">
+    <br>
+    <button class="btn-green" onclick="connectToReceiver()">🚀 連接小車並出發！</button>
+</div>
+
+<div id="telepresence-ui" class="video-container">
+    <video id="remote-video" class="remote-video" autoplay playsinline></video>
+    <video id="local-video" class="local-video" autoplay playsinline muted></video>
+    
+    <div class="overlay-ui">
+        <div class="info-card" id="conn-status">📡 連線狀態: 連線中...</div>
+        
+        <div class="info-card data-dashboard" id="receiver-dashboard" style="display: none;">
+            <div style="color:var(--primary-color); margin-bottom:6px; border-bottom:1px solid #ddd; padding-bottom:4px;">📊 車車內部數據欄</div>
+            <div class="data-row">
+                <span>收到搖桿 X:</span><span class="data-val" id="val-x">0.0</span>
+            </div>
+            <div class="data-row">
+                <span>收到搖桿 Y:</span><span class="data-val" id="val-y">0.0</span>
+            </div>
+            <div class="data-row" style="margin-top:8px; color:#27AE60;">
+                <span>左輪輸出 L:</span><span class="data-val" id="val-l" style="color:#27AE60;">0</span>
+            </div>
+            <div class="data-row" style="color:#27AE60;">
+                <span>右輪輸出 R:</span><span class="data-val" id="val-r" style="color:#27AE60;">0</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="joystick-zone" style="display:none;"></div>
+</div>
+
+<script>
+/**
+ * 1. 動物密碼生成器 (簡化 ID)
+ */
+function generateAnimalId() {
+    const animals = ['dog', 'cat', 'panda', 'bear', 'rabbit', 'lion', 'tiger', 'monkey', 'koala', 'fox', 'hippo', 'zebra', 'penguin', 'elephant', 'frog'];
+    const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
+    const randomNumber = Math.floor(100 + Math.random() * 900); // 生成 100 到 999 的隨機數字
+    return `${randomAnimal}${randomNumber}`;
+}
+
+/**
+ * 2. micro:bit 藍牙管理模組
+ */
+const uBitManager = {
+    UUIDS: {
+        UART_SERVICE: "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+        TX_CHARACTERISTIC: "6e400002-b5a3-f393-e0a9-e50e24dcca9e", 
+        RX_CHARACTERISTIC: "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  
+    },
+    device: null,
+    rxCharacteristic: null,
+    
+    updateStatus(msg, type = 'default') {
+        const el = document.getElementById("uBit-status");
+        if (el) { 
+            el.textContent = msg; 
+            el.className = `status-text status-${type}`; 
+        }
+    },
+
+    async connect() {
+        try {
+            this.updateStatus("正在尋找 micro:bit... 🔍");
+            this.device = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: "BBC micro:bit" }],
+                optionalServices: [this.UUIDS.UART_SERVICE]
+            });
+            this.device.addEventListener("gattserverdisconnected", () => this.onDisconnected());
+            const server = await this.device.gatt.connect();
+            const service = await server.getPrimaryService(this.UUIDS.UART_SERVICE);
+            this.rxCharacteristic = await service.getCharacteristic(this.UUIDS.RX_CHARACTERISTIC);
+            this.updateStatus("✅ 藍牙連接成功！車車準備好了！ 🟢", "success");
+        } catch (err) {
+            this.updateStatus("❌ 連接失敗: " + err.message + " 🔴", "error");
+        }
+    },
+
+    onDisconnected() {
+        this.updateStatus("⚠️ 藍牙斷開了！請重新連接 🔴", "error");
+        this.device = null;
+        this.rxCharacteristic = null;
+    },
+
+    async send(message) {
+        if (!this.rxCharacteristic) return;
+        try {
+            const encoder = new TextEncoder();
+            await this.rxCharacteristic.writeValue(encoder.encode(message + "\n"));
+        } catch (err) { console.error("藍牙傳送失敗:", err); }
+    }
+};
+
+document.getElementById("btn-connect-bt").addEventListener("click", () => uBitManager.connect());
+
+/**
+ * 3. Telepresence 與 核心控制邏輯
+ */
+let peer = null;
+let dataConn = null;
+let localStream = null;
+let role = ''; 
+let joystickManager = null;
+
+function showScreen(id) {
+    ['home-panel', 'receiver-setup', 'controller-setup', 'telepresence-ui'].forEach(el => {
+        document.getElementById(el).style.display = (el === id) ? 'block' : 'none';
+    });
+}
+
+async function getMedia() {
+    try {
+        // 優化行動裝置鏡頭調用，預設採用後置鏡頭(environment)方便看路，若iPad無後置則自動降級
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, 
+            audio: true 
+        });
+        document.getElementById('local-video').srcObject = localStream;
+    } catch (err) {
+        alert("無法打開鏡頭或麥克風，請檢查權限設定喔！\n錯誤: " + err.message);
+    }
+}
+
+// === [初始化] 接收端邏輯 ===
+async function initReceiver() {
+    role = 'receiver';
+    showScreen('receiver-setup');
+    await getMedia();
+
+    // 產生好記的動物密碼並初始化 Peer
+    const customAnimalId = generateAnimalId();
+    document.getElementById('my-peer-id').textContent = `🐾 ${customAnimalId}`;
+
+    peer = new Peer(customAnimalId); 
+    
+    peer.on('error', (err) => {
+        if(err.type === 'unavailable-id') {
+            alert("代碼重複了，請重新整理網頁再試一次。");
+        } else {
+            console.error(err);
+        }
+    });
+
+    // 聽取控制端的視像通話
+    peer.on('call', (call) => {
+        call.answer(localStream); 
+        call.on('stream', (remoteStream) => {
+            document.getElementById('remote-video').srcObject = remoteStream;
+            showScreen('telepresence-ui');
+            document.getElementById('receiver-dashboard').style.display = 'block'; // 顯示即時數據小欄
+            document.getElementById('conn-status').textContent = "📡 狀態: 成功連接控制端！🎮";
+        });
+    });
+
+    // 聽取控制端傳來的搖桿數據
+    peer.on('connection', (conn) => {
+        dataConn = conn;
+        conn.on('data', (data) => {
+            const [x, y] = data.split(',').map(Number);
+            
+            // 差速驅動演算法 (Differential Drive)
+            let leftSpeed = y + x;
+            let rightSpeed = y - x;
+            
+            // 確保限制在 -100 至 100 之間
+            let maxMagnitude = Math.max(Math.abs(leftSpeed), Math.abs(rightSpeed));
+            if (maxMagnitude > 100) {
+                leftSpeed = (leftSpeed / maxMagnitude) * 100;
+                rightSpeed = (rightSpeed / maxMagnitude) * 100;
+            }
+            
+            leftSpeed = Math.round(leftSpeed);
+            rightSpeed = Math.round(rightSpeed);
+            
+            // 更新接收端介面小欄的數值
+            document.getElementById('val-x').textContent = x.toFixed(1);
+            document.getElementById('val-y').textContent = y.toFixed(1);
+            document.getElementById('val-l').textContent = leftSpeed;
+            document.getElementById('val-r').textContent = rightSpeed;
+            
+            // 傳送數據給 micro:bit 車車
+            uBitManager.send(`${leftSpeed},${rightSpeed}`);
+        });
+    });
+}
+
+// === [初始化] 控制端邏輯 ===
+async function initController() {
+    role = 'controller';
+    showScreen('controller-setup');
+    await getMedia();
+}
+
+function connectToReceiver() {
+    let targetId = document.getElementById('target-id').value.trim().toLowerCase();
+    if (!targetId) return alert("請輸入車車螢幕上的動物密碼喔！");
+    
+    // 移除小朋友可能不小心複製到的表情符號
+    targetId = targetId.replace(/[^a-z0-9]/g, '');
+
+    peer = new Peer();
+    peer.on('open', () => {
+        // 1. 打電話給接收端
+        const call = peer.call(targetId, localStream);
+        call.on('stream', (remoteStream) => {
+            document.getElementById('remote-video').srcObject = remoteStream;
+            showScreen('telepresence-ui');
+            document.getElementById('conn-status').textContent = "📡 狀態: 已成功連線至小車車！🚗";
+            setupJoystick(); 
+        });
+
+        // 2. 建立搖桿數據通道
+        dataConn = peer.connect(targetId);
+    });
+    
+    peer.on('error', (err) => {
+        alert("找不到這個動物密碼，請檢查有沒有打錯字喔！");
+    });
+}
+
+// === 虛擬搖桿模組 (NippleJS) ===
+function setupJoystick() {
+    const zone = document.getElementById('joystick-zone');
+    zone.style.display = 'block';
+    
+    joystickManager = nipplejs.create({
+        zone: zone,
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: '#4D96FF',
+        size: 130
+    });
+
+    // 當推動搖桿時
+    joystickManager.on('move', (evt, data) => {
+        let x = data.vector.x * 100;
+        let y = data.vector.y * 100;
+        
+        const msg = `${x.toFixed(1)},${y.toFixed(1)}`;
+        if (dataConn && dataConn.open) {
+            dataConn.send(msg);
+        }
+    });
+
+    // 放開搖桿時，發送 0,0 讓小車立刻停下
+    joystickManager.on('end', () => {
+        if (dataConn && dataConn.open) {
+            dataConn.send("0,0");
+        }
+    });
+}
+</script>
+</body>
+</html>
