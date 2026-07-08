@@ -270,7 +270,7 @@ function handleDataReceived(data) {
         uBitManager.send(`${leftSpeed},${rightSpeed}`);
 
     } else if (data.startsWith('E:')) {
-        // 處理收到的 Emoji
+        // 處理對方發送過來的 Emoji
         showFloatingEmoji(data.substring(2));
     }
 }
@@ -284,9 +284,8 @@ function showFloatingEmoji(emoji) {
     setTimeout(() => el.remove(), 2000);
 }
 
-// 發送 Emoji 給對方
+// 發送 Emoji 給對方（移除了自己畫面的顯示）
 function sendEmoji(emoji) {
-    showFloatingEmoji(emoji); // 自己畫面上也顯示
     if (dataConn && dataConn.open) {
         dataConn.send(`E:${emoji}`);
     }
