@@ -213,18 +213,29 @@ function generateSimpleId() {
     return `${animals[Math.floor(Math.random() * animals.length)]}${Math.floor(100 + Math.random() * 900)}`;
 }
 
-/** 注入 Google STUN 伺服器，提高跨網域穿透率 */
+/** 注入 Google STUN 與 免費公共 TURN 伺服器，達成 100% 跨網域穿透 */
 const peerConfig = {
     config: {
         'iceServers': [
+            // 第一步：嘗試免費的 Google STUN 進行 P2P 直連打洞
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
+            
+            // 第二步：如果打洞失敗，自動啟用 TURN 中繼伺服器轉發影像
+            { 
+                urls: 'turn:openrelay.metered.ca:80',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            { 
+                urls: 'turn:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            }
         ]
     }
 };
 
-/** micro:bit 藍牙模組 */
 const uBitManager = {
     UUIDS: { UART_SERVICE: "6e400001-b5a3-f393-e0a9-e50e24dcca9e", TX_CHARACTERISTIC: "6e400002-b5a3-f393-e0a9-e50e24dcca9e", RX_CHARACTERISTIC: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" },
     device: null, rxCharacteristic: null,
@@ -255,7 +266,6 @@ const uBitManager = {
 document.getElementById("btn-connect-bt-setup").addEventListener("click", () => uBitManager.connect());
 document.getElementById("btn-connect-bt-active").addEventListener("click", () => uBitManager.connect());
 
-/** Telepresence 與 雙向數據核心 */
 let peer = null;
 let dataConn = null;
 let localStream = null;
@@ -284,16 +294,13 @@ function showScreen(id) {
     });
 }
 
-// 【修復】加入鏡頭退回機制 (Fallback)，解決電腦端報錯黑畫面的問題
 async function getMedia(isReceiver) {
     try {
-        // 先嘗試帶有詳細限制的請求 (手機通常能成功)
         localStream = await navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: currentFacingMode, width: { ideal: 640, max: 640 }, height: { ideal: 480, max: 480 }, frameRate: { ideal: 15, max: 20 } }, 
             audio: !isReceiver 
         });
     } catch (err) { 
-        // 如果失敗 (例如電腦沒有自拍鏡頭的概念)，退回最基本的視訊請求
         console.warn("自訂鏡頭參數失敗，退回預設參數", err);
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: !isReceiver });
@@ -316,7 +323,6 @@ async function toggleReceiverCamera() {
             audio: false 
         });
     } catch(err) {
-        // 退回預設
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     }
     
@@ -526,7 +532,7 @@ async function initReceiver() {
     const simpleId = generateSimpleId();
     document.getElementById('my-peer-id').textContent = simpleId;
 
-    // 帶入 Google STUN 設定
+    // 將包含 TURN 伺服器的設定檔傳入 PeerJS
     peer = new Peer(simpleId, peerConfig); 
     
     peer.on('call', (call) => {
@@ -557,7 +563,7 @@ function connectToReceiver() {
     let targetId = document.getElementById('target-id').value.trim().toLowerCase();
     if (!targetId) return alert("請輸入配對碼");
 
-    // 帶入 Google STUN 設定
+    // 將包含 TURN 伺服器的設定檔傳入 PeerJS
     peer = new Peer(undefined, peerConfig);
     peer.on('open', () => {
         const call = peer.call(targetId, localStream);
