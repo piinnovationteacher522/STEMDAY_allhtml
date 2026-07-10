@@ -82,9 +82,9 @@
         .data-row { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
         .data-val { font-family: monospace; font-size: 15px; font-weight: bold; background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; }
 
-        /* 畫面中央的 AI 準星 (僅控制端顯示) */
-        #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 40px; height: 40px; border: 2px dashed rgba(255, 255, 255, 0.7); border-radius: 50%; z-index: 15; display: none; pointer-events: none; }
-        #crosshair::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 4px; height: 4px; background: red; border-radius: 50%; }
+        /* 畫面點擊的追蹤準星 */
+        #crosshair { position: absolute; width: 50px; height: 50px; border: 3px dashed var(--danger); border-radius: 50%; z-index: 15; display: none; pointer-events: none; transform: translate(-50%, -50%); box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        #crosshair::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 6px; height: 6px; background: red; border-radius: 50%; }
 
         #joystick-zone { position: absolute; bottom: 80px; left: 80px; width: 180px; height: 180px; z-index: 20; background: rgba(255,255,255,0.15); border-radius: 50%; border: 1px dashed rgba(255,255,255,0.5); pointer-events: auto; }
         
@@ -189,8 +189,13 @@
             <div class="info-card" style="margin-top: 10px;">
                 <div style="font-weight:bold; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:8px;">進階遙控功能</div>
                 <button onclick="sendRemoteCommand('CAM')" class="btn-secondary">🔄 切換車載前後鏡頭</button>
-                <button onclick="sendRemoteCommand('AI_LEARN')" class="btn-success" id="btn-ai-start">🎯 AI 鎖定中心目標</button>
-                <button onclick="sendRemoteCommand('AI_STOP')" class="btn-danger" id="btn-ai-stop" style="display: none;">🛑 停止 AI 跟隨模式</button>
+                
+                <button onclick="enableAiMode()" class="btn-success" id="btn-ai-start">🎯 啟動 AI 點擊跟隨</button>
+                <div id="ai-controls" style="display: none;">
+                    <p style="font-size: 14px; color: var(--danger); margin: 5px 0 10px 0; font-weight: bold; text-align: center;">👆 請點擊視訊畫面選擇目標</p>
+                    <button onclick="resetAiTarget()" class="btn-secondary">🔄 重置目標</button>
+                    <button onclick="disableAiMode()" class="btn-danger">🛑 退出 AI 模式</button>
+                </div>
             </div>
         </div>
     </div>
@@ -209,7 +214,7 @@ function generateSimpleId() {
     return `${animals[Math.floor(Math.random() * animals.length)]}${Math.floor(100 + Math.random() * 900)}`;
 }
 
-/** micro:bit 藍牙模組 (未做任何改動) */
+/** micro:bit 藍牙模組 */
 const uBitManager = {
     UUIDS: { UART_SERVICE: "6e400001-b5a3-f393-e0a9-e50e24dcca9e", TX_CHARACTERISTIC: "6e400002-b5a3-f393-e0a9-e50e24dcca9e", RX_CHARACTERISTIC: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" },
     device: null, rxCharacteristic: null,
@@ -251,14 +256,18 @@ let currentCall = null;
 let currentJoyX = 0;
 let currentJoyY = 0;
 let joystickInterval = null;
-let controllerAiMode = false; // 控制端是否處於 AI 模式 (決定是否暫停發送搖桿)
+
+// --- 控制端專用變數 ---
+let controllerAiMode = false; 
+let isAiModeReady = false;
 
 // --- 接收端專用變數 ---
 let currentFacingMode = 'user'; 
 let receiverAiMode = false;
+let hasTarget = false;
 let aiTargetRGB = { r:0, g:0, b:0 };
 const cvCanvas = document.createElement('canvas');
-cvCanvas.width = 160; cvCanvas.height = 120; // 降低解析度以確保即時處理順暢
+cvCanvas.width = 160; cvCanvas.height = 120;
 const cvCtx = cvCanvas.getContext('2d', { willReadFrequently: true });
 
 function showScreen(id) {
@@ -267,7 +276,6 @@ function showScreen(id) {
     });
 }
 
-// 取得媒體串流
 async function getMedia(isReceiver) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
@@ -278,11 +286,11 @@ async function getMedia(isReceiver) {
     } catch (err) { alert("無法獲取視訊鏡頭權限: " + err.message); }
 }
 
-// 接收端：動態切換鏡頭
+// 動態切換鏡頭
 async function toggleReceiverCamera() {
     if (!localStream) return;
     currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-    localStream.getTracks().forEach(track => track.stop()); // 停止舊串流
+    localStream.getTracks().forEach(track => track.stop()); 
     
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
@@ -291,7 +299,6 @@ async function toggleReceiverCamera() {
         });
         document.getElementById('local-video').srcObject = localStream;
         
-        // 替換正在 WebRTC 通話中的視訊軌，保持通話不斷線
         if (currentCall && currentCall.peerConnection) {
             const sender = currentCall.peerConnection.getSenders().find(s => s.track.kind === 'video');
             if (sender) sender.replaceTrack(localStream.getVideoTracks()[0]);
@@ -299,29 +306,81 @@ async function toggleReceiverCamera() {
     } catch(e) { console.error("鏡頭切換失敗:", e); }
 }
 
-// 控制端：發送自訂指令
+// 發送自訂指令
 function sendRemoteCommand(cmd) {
     if (dataConn) {
         try { dataConn.send(`C:${cmd}`); } catch(e) {}
     }
-    // 控制端本身的 UI 切換
-    if (cmd === 'AI_LEARN') {
-        controllerAiMode = true; // 暫停傳送手動搖桿資料
-        document.getElementById('btn-ai-start').style.display = 'none';
-        document.getElementById('btn-ai-stop').style.display = 'block';
-    } else if (cmd === 'AI_STOP') {
-        controllerAiMode = false;
-        document.getElementById('btn-ai-stop').style.display = 'none';
-        document.getElementById('btn-ai-start').style.display = 'block';
-    }
 }
 
-// 處理接收到的所有數據
+// 控制端：AI UI 切換
+function enableAiMode() {
+    controllerAiMode = true;
+    isAiModeReady = true;
+    document.getElementById('btn-ai-start').style.display = 'none';
+    document.getElementById('ai-controls').style.display = 'block';
+    sendRemoteCommand('AI_MODE_ON');
+}
+
+function disableAiMode() {
+    controllerAiMode = false;
+    isAiModeReady = false;
+    document.getElementById('ai-controls').style.display = 'none';
+    document.getElementById('btn-ai-start').style.display = 'block';
+    document.getElementById('crosshair').style.display = 'none';
+    sendRemoteCommand('AI_STOP');
+}
+
+function resetAiTarget() {
+    document.getElementById('crosshair').style.display = 'none';
+    sendRemoteCommand('AI_RESET');
+}
+
+// 控制端：監聽畫面點擊事件，計算位置百分比
+document.getElementById('remote-video').addEventListener('click', (e) => {
+    if (!isAiModeReady) return;
+    const video = e.target;
+    const rect = video.getBoundingClientRect();
+    
+    // 計算 object-fit: cover 的真實畫面偏移與縮放
+    const videoRatio = video.videoWidth / video.videoHeight;
+    const elementRatio = rect.width / rect.height;
+    let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
+
+    if (elementRatio > videoRatio) {
+        renderWidth = rect.width;
+        renderHeight = rect.width / videoRatio;
+        offsetX = 0;
+        offsetY = (rect.height - renderHeight) / 2;
+    } else {
+        renderHeight = rect.height;
+        renderWidth = rect.height * videoRatio;
+        offsetX = (rect.width - renderWidth) / 2;
+        offsetY = 0;
+    }
+
+    const clickX = e.clientX - rect.left - offsetX;
+    const clickY = e.clientY - rect.top - offsetY;
+
+    // 將點擊座標轉換為百分比 (0.0 ~ 1.0)
+    const px = clickX / renderWidth;
+    const py = clickY / renderHeight;
+
+    // 更新準星位置
+    const ch = document.getElementById('crosshair');
+    ch.style.left = e.clientX + 'px';
+    ch.style.top = e.clientY + 'px';
+    ch.style.display = 'block';
+
+    // 傳送座標比例給接收端
+    sendRemoteCommand(`AI_SET_TARGET:${px},${py}`);
+});
+
+// 處理接收到的數據
 function handleDataReceived(data) {
     if (typeof data !== 'string') return;
 
     if (data.startsWith('J:') && role === 'receiver') {
-        // --- 馬達控制與運算部分 (完全未改動，完美相容手動與AI模式) ---
         const [x, y] = data.substring(2).split(',').map(Number);
         
         let leftSpeed = (y + x) * 0.5;
@@ -342,7 +401,6 @@ function handleDataReceived(data) {
         document.getElementById('val-r').textContent = rightSpeed;
         
         uBitManager.send(`${leftSpeed},${rightSpeed}`);
-        // ------------------------------------------
 
     } else if (data.startsWith('E:')) {
         let emojiStr = data.substring(2);
@@ -350,39 +408,57 @@ function handleDataReceived(data) {
         showFloatingEmoji(emojiStr);
 
     } else if (data.startsWith('C:') && role === 'receiver') {
-        // 解析自訂指令
         const cmd = data.substring(2);
-        if (cmd === 'CAM') toggleReceiverCamera();
-        else if (cmd === 'AI_LEARN') startAITracking();
-        else if (cmd === 'AI_STOP') stopAITracking();
+        if (cmd === 'CAM') {
+            toggleReceiverCamera();
+        } else if (cmd === 'AI_MODE_ON') {
+            receiverAiMode = true;
+            hasTarget = false;
+            requestAnimationFrame(cvTrackingLoop);
+        } else if (cmd.startsWith('AI_SET_TARGET:')) {
+            const [px, py] = cmd.substring(14).split(',').map(Number);
+            setAITarget(px, py);
+        } else if (cmd === 'AI_RESET') {
+            hasTarget = false;
+            handleDataReceived("J:0,0"); // 停止馬達
+        } else if (cmd === 'AI_STOP') {
+            receiverAiMode = false;
+            hasTarget = false;
+            handleDataReceived("J:0,0"); // 停止馬達
+        }
     }
 }
 
-// 接收端：啟動 AI 電腦視覺追蹤
-function startAITracking() {
+// 接收端：設定目標顏色
+function setAITarget(px, py) {
     if (!localStream) return;
     const video = document.getElementById('local-video');
     cvCtx.drawImage(video, 0, 0, cvCanvas.width, cvCanvas.height);
     
-    // 擷取正中央目標的顏色
-    const cx = Math.floor(cvCanvas.width / 2);
-    const cy = Math.floor(cvCanvas.height / 2);
+    // 依據控制端傳來的百分比找出真實像素位置
+    let cx = Math.floor(px * cvCanvas.width);
+    let cy = Math.floor(py * cvCanvas.height);
+    
+    // 邊界防呆
+    cx = Math.max(0, Math.min(cvCanvas.width - 1, cx));
+    cy = Math.max(0, Math.min(cvCanvas.height - 1, cy));
+
     const pixel = cvCtx.getImageData(cx, cy, 1, 1).data;
     aiTargetRGB = { r: pixel[0], g: pixel[1], b: pixel[2] };
-    
-    receiverAiMode = true;
-    requestAnimationFrame(cvTrackingLoop);
-}
-
-function stopAITracking() {
-    receiverAiMode = false;
-    handleDataReceived("J:0,0"); // 發送停止訊號給馬達處理函式
+    hasTarget = true;
 }
 
 // 接收端：AI 影像處理迴圈
 function cvTrackingLoop() {
     if (!receiverAiMode || role !== 'receiver') return;
     
+    if (!hasTarget) {
+        // 沒有目標時原地等待，不觸發動作
+        handleDataReceived("J:0,0");
+        if (receiverAiMode) setTimeout(() => requestAnimationFrame(cvTrackingLoop), 100);
+        return;
+    }
+
     const video = document.getElementById('local-video');
     if (video.videoWidth === 0) {
         requestAnimationFrame(cvTrackingLoop);
@@ -394,7 +470,7 @@ function cvTrackingLoop() {
     
     let matchCount = 0;
     let sumX = 0;
-    const tolerance = 45; // 顏色匹配寬容度
+    const tolerance = 45; 
 
     for (let i = 0; i < imgData.length; i += 4) {
         if (Math.abs(imgData[i] - aiTargetRGB.r) < tolerance && 
@@ -407,19 +483,16 @@ function cvTrackingLoop() {
 
     if (matchCount > 15) {
         let centroidX = sumX / matchCount;
-        let errorX = centroidX - (cvCanvas.width / 2); // 偏離中心的誤差
+        let errorX = centroidX - (cvCanvas.width / 2); 
         
-        // 將畫面誤差轉換為虛擬搖桿訊號 (假裝自己是搖桿)
         let simX = Math.max(-100, Math.min(100, errorX * 1.5));
-        let simY = 20; // 微速前進跟隨
+        let simY = 0; // 【更新】設為 0，車子只會原地自轉，不會前進
         
-        // 丟回給原有的搖桿處理邏輯
         handleDataReceived(`J:${simX.toFixed(1)},${simY.toFixed(1)}`);
     } else {
-        handleDataReceived("J:0,0"); // 找不到目標時停下
+        handleDataReceived("J:0,0");
     }
     
-    // 維持約 10fps 的檢查頻率即可，避免手機過熱
     if (receiverAiMode) setTimeout(() => requestAnimationFrame(cvTrackingLoop), 100); 
 }
 
@@ -449,7 +522,7 @@ async function initReceiver() {
     peer = new Peer(simpleId); 
     
     peer.on('call', (call) => {
-        currentCall = call; // 儲存 call 物件以便後續切換鏡頭
+        currentCall = call; 
         call.answer(localStream); 
         call.on('stream', (remoteStream) => {
             document.getElementById('remote-video').srcObject = remoteStream;
@@ -484,8 +557,7 @@ function connectToReceiver() {
             document.getElementById('remote-video').srcObject = remoteStream;
             showScreen('telepresence-ui');
             document.getElementById('emoji-bar').style.display = 'flex';
-            document.getElementById('controller-tools').style.display = 'block'; // 顯示控制端工具
-            document.getElementById('crosshair').style.display = 'block'; // 顯示 AI 瞄準準星
+            document.getElementById('controller-tools').style.display = 'block';
             document.getElementById('conn-status').textContent = "連線狀態: 已成功連接遠端";
             setupJoystick(); 
         });
@@ -518,7 +590,7 @@ function setupJoystick() {
 
     if (joystickInterval) clearInterval(joystickInterval);
     joystickInterval = setInterval(() => {
-        // 【重要】如果開啟了 AI 模式，控制端就會停止發送手動搖桿數據，避免干擾接收端的自動駕駛
+        // 當開啟 AI 模式時，手動搖桿的訊號會被暫停，避免打架
         if (dataConn && !controllerAiMode) {
             try { dataConn.send(`J:${currentJoyX.toFixed(1)},${currentJoyY.toFixed(1)}`); } catch(e) {}
         }
