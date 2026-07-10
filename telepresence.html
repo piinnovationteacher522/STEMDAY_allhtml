@@ -76,10 +76,15 @@
         }
         .overlay-ui button.btn-secondary { background: #6c757d; }
         .overlay-ui button.btn-success { background: var(--success); width: 100%; }
+        .overlay-ui button.btn-danger { background: var(--danger); width: 100%; }
         
         .info-card { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(5px); color: var(--dark); padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid var(--border); font-size: 14px; pointer-events: auto; width: 240px; box-sizing: border-box; }
         .data-row { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
         .data-val { font-family: monospace; font-size: 15px; font-weight: bold; background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; }
+
+        /* 畫面中央的 AI 準星 (僅控制端顯示) */
+        #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 40px; height: 40px; border: 2px dashed rgba(255, 255, 255, 0.7); border-radius: 50%; z-index: 15; display: none; pointer-events: none; }
+        #crosshair::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 4px; height: 4px; background: red; border-radius: 50%; }
 
         #joystick-zone { position: absolute; bottom: 80px; left: 80px; width: 180px; height: 180px; z-index: 20; background: rgba(255,255,255,0.15); border-radius: 50%; border: 1px dashed rgba(255,255,255,0.5); pointer-events: auto; }
         
@@ -153,6 +158,8 @@
     <video id="remote-video" class="remote-video" autoplay playsinline></video>
     <video id="local-video" class="local-video" autoplay playsinline muted></video>
     
+    <div id="crosshair"></div>
+    
     <div class="emoji-bar" id="emoji-bar" style="display: none;">
         <button class="emoji-btn" onclick="sendEmoji('👍')">👍</button>
         <button class="emoji-btn" onclick="sendEmoji('❤️')">❤️</button>
@@ -177,71 +184,56 @@
                 <div class="data-row" style="color:var(--success);"><span>右輪 R:</span><span class="data-val" id="val-r">0</span></div>
             </div>
         </div>
+        
+        <div id="controller-tools" style="display: none;">
+            <div class="info-card" style="margin-top: 10px;">
+                <div style="font-weight:bold; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:8px;">進階遙控功能</div>
+                <button onclick="sendRemoteCommand('CAM')" class="btn-secondary">🔄 切換車載前後鏡頭</button>
+                <button onclick="sendRemoteCommand('AI_LEARN')" class="btn-success" id="btn-ai-start">🎯 AI 鎖定中心目標</button>
+                <button onclick="sendRemoteCommand('AI_STOP')" class="btn-danger" id="btn-ai-stop" style="display: none;">🛑 停止 AI 跟隨模式</button>
+            </div>
+        </div>
     </div>
 
     <div id="joystick-zone" style="display:none;"></div>
 </div>
 
 <script>
-// 面板切換
 document.getElementById("toggle-dashboard").addEventListener("click", () => {
     const dash = document.getElementById("receiver-dashboard");
     dash.style.display = dash.style.display === "none" ? "block" : "none";
 });
 
-/** 簡化連線 ID 生成器 */
 function generateSimpleId() {
     const animals = ['dog', 'cat', 'panda', 'bear', 'rabbit', 'lion', 'tiger', 'monkey', 'koala', 'fox', 'hippo', 'zebra', 'penguin', 'elephant', 'frog'];
-    const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
-    return `${randomAnimal}${Math.floor(100 + Math.random() * 900)}`;
+    return `${animals[Math.floor(Math.random() * animals.length)]}${Math.floor(100 + Math.random() * 900)}`;
 }
 
 /** micro:bit 藍牙模組 (未做任何改動) */
 const uBitManager = {
-    UUIDS: {
-        UART_SERVICE: "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
-        TX_CHARACTERISTIC: "6e400002-b5a3-f393-e0a9-e50e24dcca9e", 
-        RX_CHARACTERISTIC: "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  
-    },
-    device: null,
-    rxCharacteristic: null,
-    
+    UUIDS: { UART_SERVICE: "6e400001-b5a3-f393-e0a9-e50e24dcca9e", TX_CHARACTERISTIC: "6e400002-b5a3-f393-e0a9-e50e24dcca9e", RX_CHARACTERISTIC: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" },
+    device: null, rxCharacteristic: null,
     updateStatus(msg, type = 'default') {
         const elSetup = document.getElementById("uBit-status-setup");
         const elActive = document.getElementById("uBit-status-active");
         if (elSetup) { elSetup.textContent = msg; elSetup.className = `status-text status-${type}`; }
         if (elActive) { elActive.textContent = msg; elActive.className = `status-text status-${type}`; }
     },
-
     async connect() {
         try {
             this.updateStatus("正在搜尋裝置...", "default");
-            this.device = await navigator.bluetooth.requestDevice({
-                filters: [{ namePrefix: "BBC micro:bit" }],
-                optionalServices: [this.UUIDS.UART_SERVICE]
-            });
+            this.device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: "BBC micro:bit" }], optionalServices: [this.UUIDS.UART_SERVICE] });
             this.device.addEventListener("gattserverdisconnected", () => this.onDisconnected());
             const server = await this.device.gatt.connect();
             const service = await server.getPrimaryService(this.UUIDS.UART_SERVICE);
             this.rxCharacteristic = await service.getCharacteristic(this.UUIDS.RX_CHARACTERISTIC);
             this.updateStatus("已連接", "success");
-        } catch (err) {
-            this.updateStatus("連接失敗: " + err.message, "error");
-        }
+        } catch (err) { this.updateStatus("連接失敗: " + err.message, "error"); }
     },
-
-    onDisconnected() {
-        this.updateStatus("已中斷連線", "error");
-        this.device = null;
-        this.rxCharacteristic = null;
-    },
-
+    onDisconnected() { this.updateStatus("已中斷連線", "error"); this.device = null; this.rxCharacteristic = null; },
     async send(message) {
         if (!this.rxCharacteristic) return;
-        try {
-            const encoder = new TextEncoder();
-            await this.rxCharacteristic.writeValue(encoder.encode(message + "\n"));
-        } catch (err) { console.error("藍牙發送失敗:", err); }
+        try { await this.rxCharacteristic.writeValue(new TextEncoder().encode(message + "\n")); } catch (err) {}
     }
 };
 
@@ -254,10 +246,20 @@ let dataConn = null;
 let localStream = null;
 let role = ''; 
 let joystickManager = null;
+let currentCall = null; 
 
 let currentJoyX = 0;
 let currentJoyY = 0;
 let joystickInterval = null;
+let controllerAiMode = false; // 控制端是否處於 AI 模式 (決定是否暫停發送搖桿)
+
+// --- 接收端專用變數 ---
+let currentFacingMode = 'user'; 
+let receiverAiMode = false;
+let aiTargetRGB = { r:0, g:0, b:0 };
+const cvCanvas = document.createElement('canvas');
+cvCanvas.width = 160; cvCanvas.height = 120; // 降低解析度以確保即時處理順暢
+const cvCtx = cvCanvas.getContext('2d', { willReadFrequently: true });
 
 function showScreen(id) {
     ['home-panel', 'receiver-setup', 'controller-setup', 'telepresence-ui'].forEach(el => {
@@ -265,29 +267,61 @@ function showScreen(id) {
     });
 }
 
-// 取得媒體串流 
+// 取得媒體串流
 async function getMedia(isReceiver) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                facingMode: "user", 
-                width: { ideal: 640, max: 640 }, 
-                height: { ideal: 480, max: 480 },
-                frameRate: { ideal: 15, max: 20 }
-            }, 
+            video: { facingMode: currentFacingMode, width: { ideal: 640, max: 640 }, height: { ideal: 480, max: 480 }, frameRate: { ideal: 15, max: 20 } }, 
             audio: !isReceiver 
         });
         document.getElementById('local-video').srcObject = localStream;
-    } catch (err) {
-        alert("無法獲取視訊鏡頭權限: " + err.message);
+    } catch (err) { alert("無法獲取視訊鏡頭權限: " + err.message); }
+}
+
+// 接收端：動態切換鏡頭
+async function toggleReceiverCamera() {
+    if (!localStream) return;
+    currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    localStream.getTracks().forEach(track => track.stop()); // 停止舊串流
+    
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: currentFacingMode, width: { ideal: 640, max: 640 }, height: { ideal: 480, max: 480 }, frameRate: { ideal: 15, max: 20 } }, 
+            audio: false 
+        });
+        document.getElementById('local-video').srcObject = localStream;
+        
+        // 替換正在 WebRTC 通話中的視訊軌，保持通話不斷線
+        if (currentCall && currentCall.peerConnection) {
+            const sender = currentCall.peerConnection.getSenders().find(s => s.track.kind === 'video');
+            if (sender) sender.replaceTrack(localStream.getVideoTracks()[0]);
+        }
+    } catch(e) { console.error("鏡頭切換失敗:", e); }
+}
+
+// 控制端：發送自訂指令
+function sendRemoteCommand(cmd) {
+    if (dataConn) {
+        try { dataConn.send(`C:${cmd}`); } catch(e) {}
+    }
+    // 控制端本身的 UI 切換
+    if (cmd === 'AI_LEARN') {
+        controllerAiMode = true; // 暫停傳送手動搖桿資料
+        document.getElementById('btn-ai-start').style.display = 'none';
+        document.getElementById('btn-ai-stop').style.display = 'block';
+    } else if (cmd === 'AI_STOP') {
+        controllerAiMode = false;
+        document.getElementById('btn-ai-stop').style.display = 'none';
+        document.getElementById('btn-ai-start').style.display = 'block';
     }
 }
 
-// 處理接收到的雙向數據 (Joystick 或 Emoji)
+// 處理接收到的所有數據
 function handleDataReceived(data) {
     if (typeof data !== 'string') return;
 
     if (data.startsWith('J:') && role === 'receiver') {
+        // --- 馬達控制與運算部分 (完全未改動，完美相容手動與AI模式) ---
         const [x, y] = data.substring(2).split(',').map(Number);
         
         let leftSpeed = (y + x) * 0.5;
@@ -308,21 +342,87 @@ function handleDataReceived(data) {
         document.getElementById('val-r').textContent = rightSpeed;
         
         uBitManager.send(`${leftSpeed},${rightSpeed}`);
+        // ------------------------------------------
 
     } else if (data.startsWith('E:')) {
         let emojiStr = data.substring(2);
-        try {
-            if (emojiStr.includes('%')) {
-                emojiStr = decodeURIComponent(emojiStr);
-            }
-        } catch (e) {
-            console.error("Emoji 解碼失敗:", e);
-        }
+        try { if (emojiStr.includes('%')) emojiStr = decodeURIComponent(emojiStr); } catch (e) {}
         showFloatingEmoji(emojiStr);
+
+    } else if (data.startsWith('C:') && role === 'receiver') {
+        // 解析自訂指令
+        const cmd = data.substring(2);
+        if (cmd === 'CAM') toggleReceiverCamera();
+        else if (cmd === 'AI_LEARN') startAITracking();
+        else if (cmd === 'AI_STOP') stopAITracking();
     }
 }
 
-// 畫面浮動 Emoji 呈現函數
+// 接收端：啟動 AI 電腦視覺追蹤
+function startAITracking() {
+    if (!localStream) return;
+    const video = document.getElementById('local-video');
+    cvCtx.drawImage(video, 0, 0, cvCanvas.width, cvCanvas.height);
+    
+    // 擷取正中央目標的顏色
+    const cx = Math.floor(cvCanvas.width / 2);
+    const cy = Math.floor(cvCanvas.height / 2);
+    const pixel = cvCtx.getImageData(cx, cy, 1, 1).data;
+    aiTargetRGB = { r: pixel[0], g: pixel[1], b: pixel[2] };
+    
+    receiverAiMode = true;
+    requestAnimationFrame(cvTrackingLoop);
+}
+
+function stopAITracking() {
+    receiverAiMode = false;
+    handleDataReceived("J:0,0"); // 發送停止訊號給馬達處理函式
+}
+
+// 接收端：AI 影像處理迴圈
+function cvTrackingLoop() {
+    if (!receiverAiMode || role !== 'receiver') return;
+    
+    const video = document.getElementById('local-video');
+    if (video.videoWidth === 0) {
+        requestAnimationFrame(cvTrackingLoop);
+        return;
+    }
+    
+    cvCtx.drawImage(video, 0, 0, cvCanvas.width, cvCanvas.height);
+    const imgData = cvCtx.getImageData(0, 0, cvCanvas.width, cvCanvas.height).data;
+    
+    let matchCount = 0;
+    let sumX = 0;
+    const tolerance = 45; // 顏色匹配寬容度
+
+    for (let i = 0; i < imgData.length; i += 4) {
+        if (Math.abs(imgData[i] - aiTargetRGB.r) < tolerance && 
+            Math.abs(imgData[i+1] - aiTargetRGB.g) < tolerance && 
+            Math.abs(imgData[i+2] - aiTargetRGB.b) < tolerance) {
+            matchCount++;
+            sumX += (i / 4) % cvCanvas.width;
+        }
+    }
+
+    if (matchCount > 15) {
+        let centroidX = sumX / matchCount;
+        let errorX = centroidX - (cvCanvas.width / 2); // 偏離中心的誤差
+        
+        // 將畫面誤差轉換為虛擬搖桿訊號 (假裝自己是搖桿)
+        let simX = Math.max(-100, Math.min(100, errorX * 1.5));
+        let simY = 20; // 微速前進跟隨
+        
+        // 丟回給原有的搖桿處理邏輯
+        handleDataReceived(`J:${simX.toFixed(1)},${simY.toFixed(1)}`);
+    } else {
+        handleDataReceived("J:0,0"); // 找不到目標時停下
+    }
+    
+    // 維持約 10fps 的檢查頻率即可，避免手機過熱
+    if (receiverAiMode) setTimeout(() => requestAnimationFrame(cvTrackingLoop), 100); 
+}
+
 function showFloatingEmoji(emoji) {
     const el = document.createElement('div');
     el.className = 'floating-emoji';
@@ -331,15 +431,9 @@ function showFloatingEmoji(emoji) {
     setTimeout(() => el.remove(), 2000);
 }
 
-// 發送 Emoji 給對方
 function sendEmoji(emoji) {
-    // 已經移除 showFloatingEmoji(emoji);，自己畫面上將不會再出現動畫
     if (dataConn) {
-        try {
-            dataConn.send(`E:${encodeURIComponent(emoji)}`);
-        } catch(e) {
-            console.error("Emoji 傳送失敗:", e);
-        }
+        try { dataConn.send(`E:${encodeURIComponent(emoji)}`); } catch(e) {}
     }
 }
 
@@ -355,6 +449,7 @@ async function initReceiver() {
     peer = new Peer(simpleId); 
     
     peer.on('call', (call) => {
+        currentCall = call; // 儲存 call 物件以便後續切換鏡頭
         call.answer(localStream); 
         call.on('stream', (remoteStream) => {
             document.getElementById('remote-video').srcObject = remoteStream;
@@ -389,6 +484,8 @@ function connectToReceiver() {
             document.getElementById('remote-video').srcObject = remoteStream;
             showScreen('telepresence-ui');
             document.getElementById('emoji-bar').style.display = 'flex';
+            document.getElementById('controller-tools').style.display = 'block'; // 顯示控制端工具
+            document.getElementById('crosshair').style.display = 'block'; // 顯示 AI 瞄準準星
             document.getElementById('conn-status').textContent = "連線狀態: 已成功連接遠端";
             setupJoystick(); 
         });
@@ -399,9 +496,7 @@ function connectToReceiver() {
         });
     });
     
-    peer.on('error', (err) => {
-        alert("無法建立連線，請檢查配對碼是否正確。");
-    });
+    peer.on('error', (err) => { alert("無法建立連線，請檢查配對碼是否正確。"); });
 }
 
 // === 虛擬搖桿配置 ===
@@ -409,13 +504,7 @@ function setupJoystick() {
     const zone = document.getElementById('joystick-zone');
     zone.style.display = 'block';
     
-    joystickManager = nipplejs.create({
-        zone: zone,
-        mode: 'static',
-        position: { left: '50%', top: '50%' },
-        color: '#007bff',
-        size: 150 
-    });
+    joystickManager = nipplejs.create({ zone: zone, mode: 'static', position: { left: '50%', top: '50%' }, color: '#007bff', size: 150 });
 
     joystickManager.on('move', (evt, data) => {
         currentJoyX = data.vector.x * 100;
@@ -429,10 +518,9 @@ function setupJoystick() {
 
     if (joystickInterval) clearInterval(joystickInterval);
     joystickInterval = setInterval(() => {
-        if (dataConn) {
-            try {
-                dataConn.send(`J:${currentJoyX.toFixed(1)},${currentJoyY.toFixed(1)}`);
-            } catch(e) {}
+        // 【重要】如果開啟了 AI 模式，控制端就會停止發送手動搖桿數據，避免干擾接收端的自動駕駛
+        if (dataConn && !controllerAiMode) {
+            try { dataConn.send(`J:${currentJoyX.toFixed(1)},${currentJoyY.toFixed(1)}`); } catch(e) {}
         }
     }, 100);
 }
