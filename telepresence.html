@@ -82,7 +82,6 @@
         .data-row { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
         .data-val { font-family: monospace; font-size: 15px; font-weight: bold; background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; }
 
-        /* 畫面點擊的追蹤準星 */
         #crosshair { position: absolute; width: 50px; height: 50px; border: 3px dashed var(--danger); border-radius: 50%; z-index: 15; display: none; pointer-events: none; transform: translate(-50%, -50%); box-shadow: 0 0 10px rgba(0,0,0,0.5); }
         #crosshair::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 6px; height: 6px; background: red; border-radius: 50%; }
 
@@ -214,6 +213,17 @@ function generateSimpleId() {
     return `${animals[Math.floor(Math.random() * animals.length)]}${Math.floor(100 + Math.random() * 900)}`;
 }
 
+/** 注入 Google STUN 伺服器，提高跨網域穿透率 */
+const peerConfig = {
+    config: {
+        'iceServers': [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+    }
+};
+
 /** micro:bit 藍牙模組 */
 const uBitManager = {
     UUIDS: { UART_SERVICE: "6e400001-b5a3-f393-e0a9-e50e24dcca9e", TX_CHARACTERISTIC: "6e400002-b5a3-f393-e0a9-e50e24dcca9e", RX_CHARACTERISTIC: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" },
@@ -257,11 +267,9 @@ let currentJoyX = 0;
 let currentJoyY = 0;
 let joystickInterval = null;
 
-// --- 控制端專用變數 ---
 let controllerAiMode = false; 
 let isAiModeReady = false;
 
-// --- 接收端專用變數 ---
 let currentFacingMode = 'user'; 
 let receiverAiMode = false;
 let hasTarget = false;
@@ -276,17 +284,27 @@ function showScreen(id) {
     });
 }
 
+// 【修復】加入鏡頭退回機制 (Fallback)，解決電腦端報錯黑畫面的問題
 async function getMedia(isReceiver) {
     try {
+        // 先嘗試帶有詳細限制的請求 (手機通常能成功)
         localStream = await navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: currentFacingMode, width: { ideal: 640, max: 640 }, height: { ideal: 480, max: 480 }, frameRate: { ideal: 15, max: 20 } }, 
             audio: !isReceiver 
         });
-        document.getElementById('local-video').srcObject = localStream;
-    } catch (err) { alert("無法獲取視訊鏡頭權限: " + err.message); }
+    } catch (err) { 
+        // 如果失敗 (例如電腦沒有自拍鏡頭的概念)，退回最基本的視訊請求
+        console.warn("自訂鏡頭參數失敗，退回預設參數", err);
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: !isReceiver });
+        } catch (fallbackErr) {
+            alert("無法獲取視訊鏡頭權限，請確認是否為 HTTPS 環境且已允許鏡頭存取: " + fallbackErr.message);
+            return;
+        }
+    }
+    document.getElementById('local-video').srcObject = localStream;
 }
 
-// 動態切換鏡頭
 async function toggleReceiverCamera() {
     if (!localStream) return;
     currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
@@ -297,23 +315,24 @@ async function toggleReceiverCamera() {
             video: { facingMode: currentFacingMode, width: { ideal: 640, max: 640 }, height: { ideal: 480, max: 480 }, frameRate: { ideal: 15, max: 20 } }, 
             audio: false 
         });
-        document.getElementById('local-video').srcObject = localStream;
-        
-        if (currentCall && currentCall.peerConnection) {
-            const sender = currentCall.peerConnection.getSenders().find(s => s.track.kind === 'video');
-            if (sender) sender.replaceTrack(localStream.getVideoTracks()[0]);
-        }
-    } catch(e) { console.error("鏡頭切換失敗:", e); }
+    } catch(err) {
+        // 退回預設
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+    
+    document.getElementById('local-video').srcObject = localStream;
+    if (currentCall && currentCall.peerConnection) {
+        const sender = currentCall.peerConnection.getSenders().find(s => s.track.kind === 'video');
+        if (sender) sender.replaceTrack(localStream.getVideoTracks()[0]);
+    }
 }
 
-// 發送自訂指令
 function sendRemoteCommand(cmd) {
     if (dataConn) {
         try { dataConn.send(`C:${cmd}`); } catch(e) {}
     }
 }
 
-// 控制端：AI UI 切換
 function enableAiMode() {
     controllerAiMode = true;
     isAiModeReady = true;
@@ -336,13 +355,11 @@ function resetAiTarget() {
     sendRemoteCommand('AI_RESET');
 }
 
-// 控制端：監聽畫面點擊事件，計算位置百分比
 document.getElementById('remote-video').addEventListener('click', (e) => {
     if (!isAiModeReady) return;
     const video = e.target;
     const rect = video.getBoundingClientRect();
     
-    // 計算 object-fit: cover 的真實畫面偏移與縮放
     const videoRatio = video.videoWidth / video.videoHeight;
     const elementRatio = rect.width / rect.height;
     let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
@@ -362,21 +379,17 @@ document.getElementById('remote-video').addEventListener('click', (e) => {
     const clickX = e.clientX - rect.left - offsetX;
     const clickY = e.clientY - rect.top - offsetY;
 
-    // 將點擊座標轉換為百分比 (0.0 ~ 1.0)
     const px = clickX / renderWidth;
     const py = clickY / renderHeight;
 
-    // 更新準星位置
     const ch = document.getElementById('crosshair');
     ch.style.left = e.clientX + 'px';
     ch.style.top = e.clientY + 'px';
     ch.style.display = 'block';
 
-    // 傳送座標比例給接收端
     sendRemoteCommand(`AI_SET_TARGET:${px},${py}`);
 });
 
-// 處理接收到的數據
 function handleDataReceived(data) {
     if (typeof data !== 'string') return;
 
@@ -420,26 +433,23 @@ function handleDataReceived(data) {
             setAITarget(px, py);
         } else if (cmd === 'AI_RESET') {
             hasTarget = false;
-            handleDataReceived("J:0,0"); // 停止馬達
+            handleDataReceived("J:0,0"); 
         } else if (cmd === 'AI_STOP') {
             receiverAiMode = false;
             hasTarget = false;
-            handleDataReceived("J:0,0"); // 停止馬達
+            handleDataReceived("J:0,0"); 
         }
     }
 }
 
-// 接收端：設定目標顏色
 function setAITarget(px, py) {
     if (!localStream) return;
     const video = document.getElementById('local-video');
     cvCtx.drawImage(video, 0, 0, cvCanvas.width, cvCanvas.height);
     
-    // 依據控制端傳來的百分比找出真實像素位置
     let cx = Math.floor(px * cvCanvas.width);
     let cy = Math.floor(py * cvCanvas.height);
     
-    // 邊界防呆
     cx = Math.max(0, Math.min(cvCanvas.width - 1, cx));
     cy = Math.max(0, Math.min(cvCanvas.height - 1, cy));
 
@@ -448,12 +458,10 @@ function setAITarget(px, py) {
     hasTarget = true;
 }
 
-// 接收端：AI 影像處理迴圈
 function cvTrackingLoop() {
     if (!receiverAiMode || role !== 'receiver') return;
     
     if (!hasTarget) {
-        // 沒有目標時原地等待，不觸發動作
         handleDataReceived("J:0,0");
         if (receiverAiMode) setTimeout(() => requestAnimationFrame(cvTrackingLoop), 100);
         return;
@@ -486,7 +494,7 @@ function cvTrackingLoop() {
         let errorX = centroidX - (cvCanvas.width / 2); 
         
         let simX = Math.max(-100, Math.min(100, errorX * 1.5));
-        let simY = 0; // 【更新】設為 0，車子只會原地自轉，不會前進
+        let simY = 0; 
         
         handleDataReceived(`J:${simX.toFixed(1)},${simY.toFixed(1)}`);
     } else {
@@ -510,7 +518,6 @@ function sendEmoji(emoji) {
     }
 }
 
-// === 接收端初始化 ===
 async function initReceiver() {
     role = 'receiver';
     showScreen('receiver-setup');
@@ -519,7 +526,8 @@ async function initReceiver() {
     const simpleId = generateSimpleId();
     document.getElementById('my-peer-id').textContent = simpleId;
 
-    peer = new Peer(simpleId); 
+    // 帶入 Google STUN 設定
+    peer = new Peer(simpleId, peerConfig); 
     
     peer.on('call', (call) => {
         currentCall = call; 
@@ -539,7 +547,6 @@ async function initReceiver() {
     });
 }
 
-// === 控制端初始化 ===
 async function initController() {
     role = 'controller';
     showScreen('controller-setup');
@@ -550,7 +557,8 @@ function connectToReceiver() {
     let targetId = document.getElementById('target-id').value.trim().toLowerCase();
     if (!targetId) return alert("請輸入配對碼");
 
-    peer = new Peer();
+    // 帶入 Google STUN 設定
+    peer = new Peer(undefined, peerConfig);
     peer.on('open', () => {
         const call = peer.call(targetId, localStream);
         call.on('stream', (remoteStream) => {
@@ -568,10 +576,9 @@ function connectToReceiver() {
         });
     });
     
-    peer.on('error', (err) => { alert("無法建立連線，請檢查配對碼是否正確。"); });
+    peer.on('error', (err) => { alert("無法建立連線，請檢查配對碼是否正確或網路環境。"); });
 }
 
-// === 虛擬搖桿配置 ===
 function setupJoystick() {
     const zone = document.getElementById('joystick-zone');
     zone.style.display = 'block';
@@ -590,7 +597,6 @@ function setupJoystick() {
 
     if (joystickInterval) clearInterval(joystickInterval);
     joystickInterval = setInterval(() => {
-        // 當開啟 AI 模式時，手動搖桿的訊號會被暫停，避免打架
         if (dataConn && !controllerAiMode) {
             try { dataConn.send(`J:${currentJoyX.toFixed(1)},${currentJoyY.toFixed(1)}`); } catch(e) {}
         }
